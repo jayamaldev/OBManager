@@ -1,8 +1,6 @@
 package binance
 
 import (
-	"fmt"
-	"log"
 	"log/slog"
 	"ob-manager/internal/binance/dtos"
 	"strconv"
@@ -13,8 +11,10 @@ type BinanceProcessor struct {
 	feed *BinanceFeed
 }
 
-func NewBinanceProcessor() *BinanceProcessor {
-	return &BinanceProcessor{}
+func NewBinanceProcessor(feed *BinanceFeed) *BinanceProcessor {
+	return &BinanceProcessor{
+		feed: feed,
+	}
 }
 
 // process only market depth updates
@@ -26,7 +26,7 @@ func (processor *BinanceProcessor) processMarketDepthUpdate(eventUpdate dtos.Eve
 
 	if processor.feed.firstEntryMap[eventUpdate.Symbol] {
 		firstUpdateId := eventUpdate.FirstUpdateId
-		fmt.Printf("first update Id %d for currency %s \n ", firstUpdateId, eventUpdate.Symbol)
+		slog.Info("Updating Event.", "first update id", firstUpdateId, "currency pair", eventUpdate.Symbol)
 		processor.feed.firstEntryMap[eventUpdate.Symbol] = false
 		processor.feed.updateIdChan <- firstUpdateId
 	}
@@ -44,16 +44,16 @@ func (processor *BinanceProcessor) processSubscriptionList(subscriptionsList dto
 		// not an admin message
 		return
 	}
-	fmt.Println("admin message received: ", string(message))
+	slog.Info("admin message received: ", "message", string(message))
 	if subscriptionsList.Id == processor.feed.listSubscReqId {
-		fmt.Println("sending subs list to channel ", subscriptionsList.Result)
+		slog.Info("sending subs list to channel ", "subs", subscriptionsList.Result)
 		processor.feed.listSubscriptions <- subscriptionsList.Result
 	}
 }
 
 // event processor to process market depth updates
 func (processor *BinanceProcessor) updateEvents() {
-	fmt.Println("Event Processor Started")
+	slog.Info("Event Processor Started")
 	for {
 		eventUpdate := <-processor.feed.bufferedEvents
 		currPair := eventUpdate.Symbol
@@ -65,12 +65,11 @@ func (processor *BinanceProcessor) updateEvents() {
 
 		if eventUpdate.EventType != depthUpdateEvent {
 			// Order Book Manager do not need to process these events
-			fmt.Printf("Event type for curr pair %s %s \n", currPair, eventUpdate.EventType)
+			slog.Info("Event type", "curr pair", currPair, "event type", eventUpdate.EventType)
 			continue
 		}
 
-		formattedText := fmt.Sprintf("processing event for curr pair: %s %d %d %s", currPair, eventUpdate.FirstUpdateId, eventUpdate.FinalUpdateId, time.Now())
-		fmt.Println(formattedText)
+		slog.Info("processing event", "currency pair", currPair, "first update id", eventUpdate.FirstUpdateId, "last update id", eventUpdate.FinalUpdateId, "time", time.Now())
 
 		// process bids
 		processor.processBids(eventUpdate.Bids, currPair)
@@ -86,17 +85,17 @@ func (processor *BinanceProcessor) updateEvents() {
 // process bids and update order book from snapshot
 func (processor *BinanceProcessor) processBids(bids [][]string, currPair string) {
 	for _, bidEntry := range bids {
-		priceVal, err := strconv.ParseFloat(bidEntry[0], 64)
+		_, err := strconv.ParseFloat(bidEntry[0], 64)
 		if err != nil {
-			log.Printf("Error on Parsing Bid Entry Price for curr pair %s \n", currPair)
+			slog.Error("Error on Parsing Bid Entry Price", "curr pair", currPair, "Error", err)
 		}
 
-		qtyVal, err := strconv.ParseFloat(bidEntry[1], 64)
+		_, err = strconv.ParseFloat(bidEntry[1], 64)
 		if err != nil {
-			log.Printf("Error on Parsing Bid Entry Quantity for curr pair %s \n", currPair)
+			slog.Error("Error on Parsing Bid Entry Quantity", "curr pair", currPair, "Error", err)
 		}
 
-		slog.Info("bid processed", "price: ", priceVal, " qty: ", qtyVal)
+		// slog.Info("bid processed", "price: ", priceVal, " qty: ", qtyVal)
 		// orderbook.UpdateBids(currPair, priceVal, qtyVal)
 	}
 }
@@ -104,17 +103,17 @@ func (processor *BinanceProcessor) processBids(bids [][]string, currPair string)
 // process asks and update order book from snapshot
 func (processor *BinanceProcessor) processAsks(asks [][]string, currPair string) {
 	for _, askEntry := range asks {
-		priceVal, err := strconv.ParseFloat(askEntry[0], 64)
+		_, err := strconv.ParseFloat(askEntry[0], 64)
 		if err != nil {
-			log.Printf("Error on Parsing Ask Entry Price for curr pair %s \n", currPair)
+			slog.Error("Error on Parsing Ask Entry Price", "curr pair", currPair, "Error", err)
 		}
 
-		qtyVal, err := strconv.ParseFloat(askEntry[1], 64)
+		_, err = strconv.ParseFloat(askEntry[1], 64)
 		if err != nil {
-			log.Printf("Error on Parsing Ask Entry Quantity for curr pair %s \n", currPair)
+			slog.Error("Error on Parsing Bid Entry Quantity", "curr pair", currPair, "Error", err)
 		}
 
-		slog.Info("bid processed", "price: ", priceVal, " qty: ", qtyVal)
+		// slog.Info("bid processed", "price: ", priceVal, " qty: ", qtyVal)
 		// orderbook.UpdateAsks(currPair, priceVal, qtyVal)
 	}
 }

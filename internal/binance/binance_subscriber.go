@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"ob-manager/internal/binance/dtos"
 	"strings"
@@ -17,10 +17,11 @@ type BinanceSubscriber struct {
 	uniqueIdGenerator *IDGenerator
 }
 
-func NewBinanceSubscriber() *BinanceSubscriber {
+func NewBinanceSubscriber(feed *BinanceFeed) *BinanceSubscriber {
 	idGen := NewIDGenerator()
 	return &BinanceSubscriber{
 		uniqueIdGenerator: idGen,
+		feed:              feed,
 	}
 }
 
@@ -46,18 +47,18 @@ func (subscriber *BinanceSubscriber) SubscribeToCurrPair(ctx context.Context, cu
 		Id:     subscriber.uniqueIdGenerator.getUniqueReqId(),
 	}
 
-	fmt.Println("Subscription currency pair: ", currencyPair)
+	slog.Info("Subscription currency pair", "curr pair", currencyPair)
 	// orderbook.InitOrderBookForCurrency(currencyPair)
 	subscriber.feed.firstEntryMap[currencyPair] = true
 
 	subsRequest, err := json.Marshal(subscriptionRequest)
-	fmt.Println("Subscription Request: ", string(subsRequest))
+	slog.Info("Subscription Request", "Request", string(subsRequest))
 	if err != nil {
-		fmt.Println("Error on parsing subscription request", err)
+		slog.Error("Error on parsing subscription request", "Error", err)
 	}
 	err = subscriber.feed.conn.WriteMessage(websocket.TextMessage, subsRequest)
 	if err != nil {
-		fmt.Println("error on sending subscription request")
+		slog.Error("Error on sending subscription request", "Error", err)
 	}
 
 	return subscriber.getMarketDepth(ctx, currencyPair)
@@ -67,7 +68,7 @@ func (subscriber *BinanceSubscriber) SubscribeToCurrPair(ctx context.Context, cu
 func (subscriber *BinanceSubscriber) getMarketDepth(ctx context.Context, currPair string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(snapshotURL, currPair), nil)
 	if err != nil {
-		log.Printf("Error on Creating New GET Request for curr paid %s\n", currPair)
+		slog.Error("Error on Creating New GET Request", "curr pair", currPair, "Error", err)
 		return err
 	}
 
@@ -77,19 +78,19 @@ func (subscriber *BinanceSubscriber) getMarketDepth(ctx context.Context, currPai
 	defer func() {
 		err := resp.Body.Close()
 		if err != nil {
-			log.Printf(fmt.Sprintf("Error on Closing Response for curr pair %s", currPair), err)
+			slog.Error("Error on Closing Response", "curr pair", currPair, "Error", err)
 		}
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Fatal(fmt.Sprintf("Error on Getting Snapshot for curr pair %s", currPair), err)
+		slog.Error("Error on Getting Snapshot", "curr pair", currPair, "Error", err)
 		return err
 	}
 
 	var snapshot *dtos.Snapshot
 	err = json.NewDecoder(resp.Body).Decode(&snapshot)
 	if err != nil {
-		log.Fatal(fmt.Sprintf("Cound not parse Response Json for curr pair %s", currPair), err)
+		slog.Error("Error on parse Response Json", "curr pair", currPair, "Error", err)
 		return err
 	}
 
@@ -97,11 +98,11 @@ func (subscriber *BinanceSubscriber) getMarketDepth(ctx context.Context, currPai
 	subscriber.feed.lastUpdateIds[currPair] = lastUpdateId
 
 	firstUpdateId := <-subscriber.feed.updateIdChan
-	fmt.Printf("last update id for currency pair %s : %d first update id %d \n", currPair, lastUpdateId, firstUpdateId)
+	slog.Info("last update id", "curr pair", currPair, "last update id", lastUpdateId, "first update id", firstUpdateId)
 	if lastUpdateId > firstUpdateId {
-		fmt.Printf("Condition Satisfied for curr pair %s !! \n", currPair)
+		slog.Info("Condition Satisfied", "curr pair", currPair)
 	} else {
-		fmt.Printf("Closing the Application. Re-get snapshot for currency pair %s\n", currPair)
+		slog.Warn("Closing the Application. Re-get snapshot", "curr pair", currPair)
 		return err
 	}
 
@@ -118,19 +119,19 @@ func (subscriber *BinanceSubscriber) UnsubscribeToCurrPair(currencyPair string) 
 		Id:     subscriber.uniqueIdGenerator.getUniqueReqId(),
 	}
 
-	fmt.Println("Unsubscription currency pair: ", currencyPair)
+	slog.Info("Unsubscription currency pair", "curr pair", currencyPair)
 	// orderbook.RemoveOrderBookForCurrency(currencyPair)
 
 	unsubsRequest, err := json.Marshal(unsubscriptionRequest)
-	fmt.Println("UnSubscription Request: ", string(unsubsRequest))
+	slog.Info("UnSubscription Request", "request", string(unsubsRequest))
 	if err != nil {
-		fmt.Println("Error on parsing unsubscription request", err)
+		slog.Error("Error on parsing unsubscription request", "error", err)
 	}
 	err = subscriber.feed.conn.WriteMessage(websocket.TextMessage, unsubsRequest)
 	if err != nil {
-		fmt.Println("error on sending unsubscription request")
+		slog.Error("Error on sending unsubscription request", "error", err)
 	}
-	fmt.Println("Unsubscribed for ", currencyPair)
+	slog.Info("Unsubscribed currency pair", "curr pair", currencyPair)
 }
 
 // List of Subscribtions
@@ -144,13 +145,13 @@ func (subscriber *BinanceSubscriber) ListSubscriptions() []string {
 	}
 
 	listsubsRequest, err := json.Marshal(listSubscriptionRequest)
-	fmt.Println("List Subscription Request: ", string(listsubsRequest))
+	slog.Info("List Subscription Request", "request", string(listsubsRequest))
 	if err != nil {
-		fmt.Println("Error on parsing list subscription request", err)
+		slog.Error("Error on parsing list subscription request", "error", err)
 	}
 	err = subscriber.feed.conn.WriteMessage(websocket.TextMessage, listsubsRequest)
 	if err != nil {
-		fmt.Println("error on sending unsubscription request")
+		slog.Error("Error on sending list subscription request", "error", err)
 	}
 
 	subscriptionsList := <-subscriber.feed.listSubscriptions

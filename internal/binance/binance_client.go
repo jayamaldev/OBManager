@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -32,10 +31,30 @@ type BinanceClient struct {
 }
 
 func NewBinanceClient() *BinanceClient {
-	BinanceProcessor := NewBinanceProcessor()
-	return &BinanceClient{
-		processor: BinanceProcessor,
+	firstEntryMap := make(map[string]bool)
+	lastUpdateIds := make(map[string]int)
+	bufferedEvents := make(chan dtos.EventUpdate, 1000)
+	updateIdChan := make(chan int)
+	listSubscriptions := make(chan []string)
+
+	feed := &BinanceFeed{
+		firstEntryMap:     firstEntryMap,
+		lastUpdateIds:     lastUpdateIds,
+		bufferedEvents:    bufferedEvents,
+		updateIdChan:      updateIdChan,
+		listSubscriptions: listSubscriptions,
 	}
+	binanceProcessor := NewBinanceProcessor(feed)
+	binanceSubscriber := NewBinanceSubscriber(feed)
+	return &BinanceClient{
+		processor:  binanceProcessor,
+		feed:       feed,
+		subscriber: binanceSubscriber,
+	}
+}
+
+func (client *BinanceClient) SetCurrencyPair(currPair string) {
+	client.mainCurrencyPair = currPair
 }
 
 func (client *BinanceClient) ConnectToWebSocket() error {
@@ -53,10 +72,10 @@ func (client *BinanceClient) ConnectToWebSocket() error {
 	var err error
 	client.feed.conn, _, err = websocket.DefaultDialer.Dial(u.String(), nil)
 	if err != nil {
-		log.Fatal("Websocket connectivity issue", err)
+		slog.Error("Websocket connectivity issue", "Error", err)
 		return err
 	}
-	fmt.Printf("Connected to websocket %s\n", u.String())
+	slog.Info("Connected to websocket", "url", u.String())
 
 	done := make(chan struct{})
 	client.feed.updateIdChan = make(chan int)
@@ -77,10 +96,10 @@ func (client *BinanceClient) ConnectToWebSocket() error {
 
 	go client.processor.updateEvents()
 	<-done
-	fmt.Println("Websocket Client Closed")
+	slog.Info("Websocket Client Closed")
 
 	if err := g.Wait(); err != nil {
-		log.Println("Error on Websocket Client")
+		slog.Error("Error on Websocket Client", "Error", err)
 		return err
 	}
 
@@ -94,21 +113,21 @@ func (client *BinanceClient) readAndProcessWSMessages() error {
 
 		_, message, err := client.feed.conn.ReadMessage()
 		if err != nil {
-			log.Println("Error on reading Websocket Message", err)
+			slog.Error("Error on reading Websocket Message", "Error", err)
 			return err
 		}
 
 		// market depth update
 		err = json.Unmarshal(message, &eventUpdate)
 		if err != nil {
-			fmt.Println("Error Parsing Json", err)
+			slog.Error("Error Parsing Json", "Error", err)
 			break
 		}
 
 		// subscription list response
 		err = json.Unmarshal(message, &subscriptionsList)
 		if err != nil {
-			fmt.Println("Error Parsing Subscriptions List Json", err)
+			slog.Error("Error Parsing Subscriptions List Json", "Error", err)
 			break
 		}
 
@@ -125,7 +144,7 @@ func (client *BinanceClient) readAndProcessWSMessages() error {
 func (client *BinanceClient) getMarketDepth(ctx context.Context, currPair string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(snapshotURL, currPair), nil)
 	if err != nil {
-		log.Printf("Error on Creating New GET Request for curr paid %s\n", currPair)
+		slog.Error("Error on Creating New GET Request for curr pair", "currency", currPair, "Error", err)
 		return err
 	}
 
@@ -135,19 +154,19 @@ func (client *BinanceClient) getMarketDepth(ctx context.Context, currPair string
 	defer func() {
 		err := resp.Body.Close()
 		if err != nil {
-			log.Printf(fmt.Sprintf("Error on Closing Response for curr pair %s", currPair), err)
+			slog.Error("Error on Closing Response for curr pair", "currency", currPair, "Error", err)
 		}
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Fatal(fmt.Sprintf("Error on Getting Snapshot for curr pair %s", currPair), err)
+		slog.Error("Error on Getting Snapshot for curr pair", "currency", currPair, "Error", err)
 		return err
 	}
 
 	var snapshot *dtos.Snapshot
 	err = json.NewDecoder(resp.Body).Decode(&snapshot)
 	if err != nil {
-		log.Fatal(fmt.Sprintf("Cound not parse Response Json for curr pair %s", currPair), err)
+		slog.Error("Cound not parse Response Json for curr pair", "currency", currPair, "Error", err)
 		return err
 	}
 
@@ -155,11 +174,11 @@ func (client *BinanceClient) getMarketDepth(ctx context.Context, currPair string
 	client.feed.lastUpdateIds[currPair] = lastUpdateId
 
 	firstUpdateId := <-client.feed.updateIdChan
-	fmt.Printf("last update id for currency pair %s : %d first update id %d \n", currPair, lastUpdateId, firstUpdateId)
+	slog.Info("last update id for ", "currency", currPair, "last update id", lastUpdateId, "first update id", firstUpdateId)
 	if lastUpdateId > firstUpdateId {
-		fmt.Printf("Condition Satisfied for curr pair %s !! \n", currPair)
+		slog.Info("Condition Satisfied", "currency pair", currPair)
 	} else {
-		fmt.Printf("Closing the Application. Re-get snapshot for currency pair %s\n", currPair)
+		slog.Info("Closing the Application. Re-get snapshot", "currency pair", currPair)
 		return err
 	}
 
@@ -170,6 +189,6 @@ func (client *BinanceClient) getMarketDepth(ctx context.Context, currPair string
 func (client *BinanceClient) CloseConnection() {
 	err := client.feed.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 	if err != nil {
-		log.Println("Error on writing close request to websocket")
+		slog.Error("CError on writing close request to websocket", "Error", err)
 	}
 }
