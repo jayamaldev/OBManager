@@ -6,22 +6,29 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"ob-manager/internal/binance/dtos"
+	"ob-manager/internal/upstream/binance/dtos"
 	"strings"
-
-	"github.com/gorilla/websocket"
 )
 
-type BinanceSubscriber struct {
-	feed              *BinanceFeed
+type Subscriber struct {
+	updateIdChan      chan int
+	listSubscriptions chan []string
+	requests          chan []byte
 	uniqueIdGenerator *IDGenerator
+	mdRegistry        *MarketDepthRegistry
+	updater           *OBUpdater
 }
 
-func NewBinanceSubscriber(feed *BinanceFeed) *BinanceSubscriber {
+// todo too many arguments
+func NewSubscriber(updIds chan int, listSubs chan []string, reqs chan []byte, mdRegistry *MarketDepthRegistry, updater *OBUpdater) *Subscriber {
 	idGen := NewIDGenerator()
-	return &BinanceSubscriber{
+	return &Subscriber{
+		updateIdChan:      updIds,
 		uniqueIdGenerator: idGen,
-		feed:              feed,
+		listSubscriptions: listSubs,
+		requests:          reqs,
+		mdRegistry:        mdRegistry,
+		updater:           updater,
 	}
 }
 
@@ -39,33 +46,32 @@ type ListSubscriptionRequest struct {
 }
 
 // Subscribe to Currency Pair
-func (subscriber *BinanceSubscriber) SubscribeToCurrPair(ctx context.Context, currencyPair string) error {
+func (s *Subscriber) SubscribeToCurrPair(ctx context.Context, currencyPair string) error {
 	depthRequest := fmt.Sprintf(depthStr, strings.ToLower(currencyPair))
 	subscriptionRequest := SubscriptionRequest{
 		Method: subscribe,
 		Params: []string{depthRequest},
-		Id:     subscriber.uniqueIdGenerator.getUniqueReqId(),
+		Id:     s.uniqueIdGenerator.getUniqueReqId(),
 	}
 
 	slog.Info("Subscription currency pair", "curr pair", currencyPair)
-	// orderbook.InitOrderBookForCurrency(currencyPair)
-	subscriber.feed.firstEntryMap[currencyPair] = true
+	s.updater.InitOrderBook(currencyPair)
+
+	s.mdRegistry.SetFirstEntry(currencyPair, true)
 
 	subsRequest, err := json.Marshal(subscriptionRequest)
-	slog.Info("Subscription Request", "Request", string(subsRequest))
+	slog.Info("Subscription", "Request", string(subsRequest))
 	if err != nil {
 		slog.Error("Error on parsing subscription request", "Error", err)
 	}
-	err = subscriber.feed.conn.WriteMessage(websocket.TextMessage, subsRequest)
-	if err != nil {
-		slog.Error("Error on sending subscription request", "Error", err)
-	}
 
-	return subscriber.getMarketDepth(ctx, currencyPair)
+	s.requests <- subsRequest
+
+	return s.getMarketDepth(ctx, currencyPair)
 }
 
 // get the market depth for a currency pair and populate the order book
-func (subscriber *BinanceSubscriber) getMarketDepth(ctx context.Context, currPair string) error {
+func (s *Subscriber) getMarketDepth(ctx context.Context, currPair string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(snapshotURL, currPair), nil)
 	if err != nil {
 		slog.Error("Error on Creating New GET Request", "curr pair", currPair, "Error", err)
@@ -73,6 +79,8 @@ func (subscriber *BinanceSubscriber) getMarketDepth(ctx context.Context, currPai
 	}
 
 	client := &http.Client{}
+
+	slog.Info("Sending Rest Request to get Market Depth", "Currency", currPair)
 	resp, err := client.Do(req)
 
 	defer func() {
@@ -95,9 +103,9 @@ func (subscriber *BinanceSubscriber) getMarketDepth(ctx context.Context, currPai
 	}
 
 	lastUpdateId := snapshot.LastUpdateId
-	subscriber.feed.lastUpdateIds[currPair] = lastUpdateId
+	s.mdRegistry.SetLastUpdateId(currPair, lastUpdateId)
 
-	firstUpdateId := <-subscriber.feed.updateIdChan
+	firstUpdateId := <-s.updateIdChan
 	slog.Info("last update id", "curr pair", currPair, "last update id", lastUpdateId, "first update id", firstUpdateId)
 	if lastUpdateId > firstUpdateId {
 		slog.Info("Condition Satisfied", "curr pair", currPair)
@@ -106,42 +114,41 @@ func (subscriber *BinanceSubscriber) getMarketDepth(ctx context.Context, currPai
 		return err
 	}
 
-	// orderbook.PopulateOrderBook(currPair, snapshot)
+	s.updater.updateSnapshot(currPair, snapshot)
 	return nil
 }
 
 // UnSubscribe to Currency Pair
-func (subscriber *BinanceSubscriber) UnsubscribeToCurrPair(currencyPair string) {
+func (s *Subscriber) UnsubscribeToCurrPair(currencyPair string) {
 	depthRequest := fmt.Sprintf(depthStr, strings.ToLower(currencyPair))
 	unsubscriptionRequest := SubscriptionRequest{
 		Method: unsubscribe,
 		Params: []string{depthRequest},
-		Id:     subscriber.uniqueIdGenerator.getUniqueReqId(),
+		Id:     s.uniqueIdGenerator.getUniqueReqId(),
 	}
 
 	slog.Info("Unsubscription currency pair", "curr pair", currencyPair)
-	// orderbook.RemoveOrderBookForCurrency(currencyPair)
+	s.updater.RemoveOrderBook(currencyPair)
 
 	unsubsRequest, err := json.Marshal(unsubscriptionRequest)
-	slog.Info("UnSubscription Request", "request", string(unsubsRequest))
+	slog.Info("UnSubscription", "request", string(unsubsRequest))
 	if err != nil {
 		slog.Error("Error on parsing unsubscription request", "error", err)
 	}
-	err = subscriber.feed.conn.WriteMessage(websocket.TextMessage, unsubsRequest)
-	if err != nil {
-		slog.Error("Error on sending unsubscription request", "error", err)
-	}
+
+	s.requests <- unsubsRequest
+
 	slog.Info("Unsubscribed currency pair", "curr pair", currencyPair)
 }
 
 // List of Subscribtions
-func (subscriber *BinanceSubscriber) ListSubscriptions() []string {
-	subscriber.feed.listSubscReqId = subscriber.uniqueIdGenerator.getUniqueReqId()
-	subscriber.feed.listSubscriptions = make(chan []string)
+func (s *Subscriber) ListSubscriptions() []string {
+	reqId := s.uniqueIdGenerator.getUniqueReqId()
+	s.mdRegistry.SetListSubscReqId(reqId)
 
 	listSubscriptionRequest := ListSubscriptionRequest{
 		Method: listSubscriptionsConst,
-		Id:     subscriber.feed.listSubscReqId,
+		Id:     reqId,
 	}
 
 	listsubsRequest, err := json.Marshal(listSubscriptionRequest)
@@ -149,11 +156,9 @@ func (subscriber *BinanceSubscriber) ListSubscriptions() []string {
 	if err != nil {
 		slog.Error("Error on parsing list subscription request", "error", err)
 	}
-	err = subscriber.feed.conn.WriteMessage(websocket.TextMessage, listsubsRequest)
-	if err != nil {
-		slog.Error("Error on sending list subscription request", "error", err)
-	}
 
-	subscriptionsList := <-subscriber.feed.listSubscriptions
+	s.requests <- listsubsRequest
+
+	subscriptionsList := <-s.listSubscriptions
 	return subscriptionsList
 }
