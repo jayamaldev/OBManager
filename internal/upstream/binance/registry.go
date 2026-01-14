@@ -5,9 +5,9 @@ import (
 )
 
 type MarketDepthState struct {
-	firstEntryMap  map[string]bool
-	lastUpdateIds  map[string]int
-	listSubscReqId int
+	firstEntryMap map[string]bool
+	lastUpdateIds map[string]int
+	listSubsReqId int
 }
 
 type MarketDepthRegistry struct {
@@ -20,6 +20,7 @@ func NewMarketDepthRegistry() *MarketDepthRegistry {
 		firstEntryMap: make(map[string]bool),
 		lastUpdateIds: make(map[string]int),
 	}
+
 	return &MarketDepthRegistry{
 		state: mdState,
 	}
@@ -53,16 +54,16 @@ func (r *MarketDepthRegistry) LastUpdateId(currency string) int {
 	return r.state.lastUpdateIds[currency]
 }
 
-func (r *MarketDepthRegistry) SetListSubscReqId(reqId int) {
+func (r *MarketDepthRegistry) SetListSubsReqId(reqId int) {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 
-	r.state.listSubscReqId = reqId
+	r.state.listSubsReqId = reqId
 }
 
-func (r *MarketDepthRegistry) ListSubscReqId() int {
+func (r *MarketDepthRegistry) ListSubsReqId() int {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 
-	return r.state.listSubscReqId
+	return r.state.listSubsReqId
 }

@@ -24,7 +24,7 @@ func NewStore() *OBStore {
 	}
 }
 
-// initialize order book instance from the ob store for the given currency
+// InitOrderBook initialize order book instance from the ob store for the given currency.
 func (s *OBStore) InitOrderBook(currency string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -33,10 +33,10 @@ func (s *OBStore) InitOrderBook(currency string) {
 		Bids: tree.NewWith(bidComparator),
 		Asks: tree.NewWith(askComparator),
 	}
+
 	slog.Info("Order Book Initiated for ", "currency", currency)
 }
 
-// remove order book instance from the ob store for a given currenct
 func (s *OBStore) RemoveOrderBook(currency string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -44,7 +44,6 @@ func (s *OBStore) RemoveOrderBook(currency string) {
 	delete(s.store, currency)
 }
 
-// update bids of a order book
 func (s *OBStore) UpdateBids(currency string, bids map[float64]float64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -54,7 +53,6 @@ func (s *OBStore) UpdateBids(currency string, bids map[float64]float64) {
 	}
 }
 
-// update asks of a order book
 func (s *OBStore) UpdateAsks(currency string, asks map[float64]float64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -64,13 +62,14 @@ func (s *OBStore) UpdateAsks(currency string, asks map[float64]float64) {
 	}
 }
 
-// return json string of a order book to send to the subscribed user
+// GetOrderBook returns JSON string of an order book to send to the subscribed user.
 func (s *OBStore) GetOrderBook(currency string) []byte {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	orderBook := s.store[currency]
 	jsonStr, err := json.Marshal(orderBook)
+
 	if err != nil {
 		slog.Error("error on parsing order book to json", "Error", err)
 	}
@@ -78,7 +77,7 @@ func (s *OBStore) GetOrderBook(currency string) []byte {
 	return jsonStr
 }
 
-// comparator to sort asks
+// askComparator to sort asks.
 func askComparator(a, b interface{}) int {
 	aFloat := a.(float64)
 	bFloat := b.(float64)
@@ -86,13 +85,15 @@ func askComparator(a, b interface{}) int {
 	if aFloat < bFloat {
 		return -1
 	}
+
 	if aFloat > bFloat {
 		return 1
 	}
+
 	return 0
 }
 
-// comparator to sort bids
+// bidComparator comparator to sort bids.
 func bidComparator(a, b interface{}) int {
 	aFloat := a.(float64)
 	bFloat := b.(float64)
@@ -100,8 +101,10 @@ func bidComparator(a, b interface{}) int {
 	if aFloat < bFloat {
 		return 1
 	}
+
 	if aFloat > bFloat {
 		return -1
 	}
+
 	return 0
 }

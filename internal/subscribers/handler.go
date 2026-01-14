@@ -6,12 +6,11 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// abstraction of the subscribed user store for the application
+// Store provides abstraction of the subscribed user store for the application.
 type Store interface {
 	AddUser(conn *websocket.Conn, user *User)
 	RemoveUser(conn *websocket.Conn)
 	SubUser(conn *websocket.Conn, currPair string, sub bool)
-	PushEventToUsers(message []byte, currency string)
 	GetSubscribedUsedList(currency string) []*User
 }
 

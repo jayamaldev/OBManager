@@ -2,25 +2,26 @@ package upstream
 
 import (
 	"context"
+	"log/slog"
 
 	"golang.org/x/sync/errgroup"
 )
 
-// data source connector abstraction for the upstream client
+// Connector provides abstraction for the upstream client as the data source connector.
 type Connector interface {
 	ConnectToServer(g *errgroup.Group, bufferedMsgs chan []byte) error
 	CloseConnection() error
 	SendRequests() error
 }
 
-// data source message processor abstraction for the upstream client
+// Processor provides abstraction for the upstream client as the data source message processor.
 type Processor interface {
 	ProcessMessage(bufferedMsgs chan []byte) error
 	UpdateEvents() error
 	CloseProcessor()
 }
 
-// Subs handler abstraction for the upstream client
+// Subscriber provides abstraction for the upstream client as the Subs handler.
 type Subscriber interface {
 	SubscribeToCurrPair(ctx context.Context, currencyPair string) error
 	UnsubscribeToCurrPair(currencyPair string)
@@ -41,11 +42,17 @@ func NewUpstream(ws Connector, proc Processor, subs Subscriber) *Upstream {
 	}
 }
 
-// initialize the upstream
-func (u *Upstream) initUpstream(ctx context.Context, g *errgroup.Group, currencyPair string) {
-	bufferedMsgs := make(chan []byte, 1000)
+// initUpstream initialize the upstream.
+func (u *Upstream) initUpstream(ctx context.Context, g *errgroup.Group, currencyPair string) error {
+	var bufferSize = 1000
+	bufferedMsgs := make(chan []byte, bufferSize)
 
-	u.ws.ConnectToServer(g, bufferedMsgs)
+	err := u.ws.ConnectToServer(g, bufferedMsgs)
+	if err != nil {
+		slog.Error("Failed to connect to upstream server", "err", err)
+
+		return err
+	}
 
 	// start a separate goroutine to process messages and add to a channel
 	g.Go(func() error {
@@ -62,10 +69,18 @@ func (u *Upstream) initUpstream(ctx context.Context, g *errgroup.Group, currency
 		return u.proc.UpdateEvents()
 	})
 
-	u.subs.SubscribeToCurrPair(ctx, currencyPair)
+	err = u.subs.SubscribeToCurrPair(ctx, currencyPair)
+	if err != nil {
+		slog.Error("Failed to subscribe to currency pair", "err", err)
+
+		return err
+	}
+
+	return nil
 }
 
 func (u *Upstream) closeUpstream() error {
 	u.proc.CloseProcessor()
+
 	return u.ws.CloseConnection()
 }

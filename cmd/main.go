@@ -3,15 +3,16 @@ package main
 import (
 	"context"
 	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
 	"ob-manager/internal/downstream"
 	"ob-manager/internal/downstream/wsserver"
 	"ob-manager/internal/orderbook"
 	"ob-manager/internal/subscribers"
 	"ob-manager/internal/upstream"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -39,13 +40,21 @@ func main() {
 	storeHandler := initOrderBookStore()
 
 	// initialize downstream subscribers store
-	subHandler := initSusbscriptionHandler()
+	subHandler := initSubscriptionHandler()
 
 	// start upstream client and connect to market data provider
-	client := startUpstreamClient(cg, storeHandler, subHandler)
+	client := initUpstreamClient(storeHandler, subHandler)
+
+	g.Go(func() error {
+		return client.InitClient(cg.g, cg.ctx)
+	})
 
 	// start downstream server
-	server := startDownstreamServer(cg, storeHandler, subHandler)
+	server := startDownstreamServer(storeHandler, subHandler)
+
+	g.Go(func() error {
+		return server.StartServer()
+	})
 
 	g.Go(func() error {
 		return gracefulShutdown(cg, client, server)
@@ -58,66 +67,67 @@ func main() {
 	slog.Info("Exiting OrderBook Distributor Service")
 }
 
-// initialize order book store
+// initialize order book store.
 func initOrderBookStore() *orderbook.StoreHandler {
-	obstore := orderbook.NewStore()
-	return orderbook.NewStoreHandler(obstore)
+	obStore := orderbook.NewStore()
+
+	return orderbook.NewStoreHandler(obStore)
 }
 
-// initialize downstream subscribers store
-func initSusbscriptionHandler() *subscribers.Handler {
+// initialize downstream subscribers store.
+func initSubscriptionHandler() *subscribers.Handler {
 	subsStore := subscribers.NewUserStore()
+
 	return subscribers.NewHandler(subsStore)
 }
 
-// start websocket server with error group
-func startUpstreamClient(cg *ContextGroup, ob *orderbook.StoreHandler, subs *subscribers.Handler) *upstream.Client {
+// start websocket server with error group.
+func initUpstreamClient(ob *orderbook.StoreHandler, subs *subscribers.Handler) *upstream.Client {
 	client := upstream.NewClient(ob, subs)
 	client.SetMainCurrencyPair("BTCUSDT")
-	client.InitClient(cg.g, cg.ctx)
+
 	return client
 }
 
-// start websocket server with error group
-func startDownstreamServer(cg *ContextGroup, ob *orderbook.StoreHandler, subs *subscribers.Handler) *downstream.Handler {
-	processor := wsserver.NewProcessor(ob, subs)
+// start websocket server with error group.
+func startDownstreamServer(ob *orderbook.StoreHandler, sub *subscribers.Handler) *downstream.Handler {
+	processor := wsserver.NewProcessor(ob, sub)
 	server := wsserver.NewWSServer(processor)
 	dsHandler := downstream.NewHandler(server)
 
-	cg.g.Go(func() error {
-		if err := dsHandler.StartServer(); err != nil {
-			slog.Error("error on starting Downstream server", "Error", err)
-		}
-		slog.Info("Downstream Server Initialized")
-		return nil
-	})
 	return dsHandler
 }
 
-// handle graceful shutdown
+// handle graceful shutdown.
 func gracefulShutdown(cg *ContextGroup, client *upstream.Client, dsHandler *downstream.Handler) error {
-	slog.Info("Gradeful Shutdown is monitoring")
+	slog.Info("Graceful Shutdown is monitoring")
 
 	<-cg.ctx.Done()
 
 	slog.Info("Shutdown Signal Received")
 
-	ctx, cancel := context.WithTimeout(cg.ctx, 30*time.Second)
+	var timeDuration = 30 * time.Second
+	ctx, cancel := context.WithTimeout(cg.ctx, timeDuration)
+
 	defer cancel()
 
 	err := client.CloseClient()
 	if err != nil {
 		slog.Error("Forced Shutdown: ", "Error", err)
+
 		return err
 	}
+
 	slog.Info("Websocket Client Closed")
 
 	err = dsHandler.ShutDown(ctx)
 	if err != nil {
 		slog.Error("Forced Shutdown: ", "Error", err)
 	}
+
 	slog.Info("Websocket Server Closed")
 
 	slog.Info("Server Exited Gracefully")
+
 	return nil
 }

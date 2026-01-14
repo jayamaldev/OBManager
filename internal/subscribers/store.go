@@ -15,6 +15,7 @@ type UserStore struct {
 
 func NewUserStore() *UserStore {
 	usersList := make(map[*websocket.Conn]*User)
+
 	return &UserStore{
 		usersList: usersList,
 	}
@@ -48,32 +49,22 @@ func (s *UserStore) SubUser(conn *websocket.Conn, currPair string, sub bool) {
 			}
 		}
 	}
+
 	slog.Info("User Subscription", "List", subUser.currPairs)
 }
 
-// push market data updates to the subscribed downstream users
-func (s *UserStore) PushEventToUsers(message []byte, currency string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, user := range s.usersList {
-		if slices.Contains(user.currPairs, currency) {
-			err := user.conn.WriteMessage(websocket.TextMessage, message) //todo sending ws push should not be done in the store
-			if err != nil {
-				slog.Error("Error on Writing to Websocket", "Error", err)
-			}
-		}
-	}
-}
-
-// get list of users subscribed to the currency pair
+// GetSubscribedUsedList get list of users subscribed to the currency pair.
 func (s *UserStore) GetSubscribedUsedList(currency string) []*User {
-	subUsersList := []*User{}
+	var subUsersList []*User
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	for _, user := range s.usersList {
 		if slices.Contains(user.currPairs, currency) {
 			subUsersList = append(subUsersList, user)
 		}
 	}
+
 	return subUsersList
 }

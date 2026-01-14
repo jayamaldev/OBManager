@@ -1,6 +1,6 @@
 package orderbook
 
-// provides abstration of the orderbook to the application
+// Store provides abstraction of the order book to the application.
 type Store interface {
 	InitOrderBook(currency string)
 	RemoveOrderBook(currency string)

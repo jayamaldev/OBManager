@@ -7,14 +7,14 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// abstraction of subscription user manager for the downstream server
+// SubscriptionManager provides abstraction of subscription user manager for the downstream server.
 type SubscriptionManager interface {
 	AddNewUser(conn *websocket.Conn)
 	RemoveUser(conn *websocket.Conn)
 	SubUser(conn *websocket.Conn, currPair string, sub bool)
 }
 
-// abstraction of orderbook for the downstream server
+// OBReader provides abstraction of order book for the downstream server.
 type OBReader interface {
 	GetOrderBook(curr string) []byte
 }
@@ -32,11 +32,11 @@ func NewProcessor(obReader OBReader, subs SubscriptionManager) *RequestProcessor
 }
 
 func (p *RequestProcessor) handleConnection(conn *websocket.Conn) {
-
 	// remove user from the store when closing the connection
 	defer func() {
 		p.subs.RemoveUser(conn)
 		err := conn.Close()
+
 		if err != nil {
 			slog.Error("Error on Closing the Connection", "error", err)
 		}
@@ -49,6 +49,7 @@ func (p *RequestProcessor) handleConnection(conn *websocket.Conn) {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
 			slog.Error("Error Reading Message. ", "error", err)
+
 			break
 		}
 
@@ -56,7 +57,7 @@ func (p *RequestProcessor) handleConnection(conn *websocket.Conn) {
 
 		slog.Info("Message Received: ", "message", string(message))
 
-		switch string(msgArgs[0]) {
+		switch msgArgs[0] {
 		case subscribe:
 			currPair := msgArgs[1]
 			p.handleSubscription(conn, currPair)
@@ -65,6 +66,7 @@ func (p *RequestProcessor) handleConnection(conn *websocket.Conn) {
 			p.handleUnsubscription(conn, currPair)
 		default:
 			slog.Info("Unknown command received")
+
 			if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
 				slog.Error("Error Writing Message: ", "error", err)
 			}
@@ -72,10 +74,11 @@ func (p *RequestProcessor) handleConnection(conn *websocket.Conn) {
 	}
 }
 
-// handle user subscription request. add currency subscription to the user and send latest orderbook
+// handle user subscription request. add currency subscription to the user and send latest order book.
 func (p *RequestProcessor) handleSubscription(conn *websocket.Conn, currPair string) {
 	slog.Info("Order Book Subscription Requested", "currency pair", currPair)
 	err := conn.WriteMessage(websocket.TextMessage, p.obReader.GetOrderBook(currPair))
+
 	if err != nil {
 		slog.Error("Error Writing Message: ", "error", err)
 	}
@@ -83,7 +86,7 @@ func (p *RequestProcessor) handleSubscription(conn *websocket.Conn, currPair str
 	p.subs.SubUser(conn, currPair, true)
 }
 
-// handle user unsubscription request. remove currency subscription from the user
+// handle user unsubscription request. remove currency subscription from the user.
 func (p *RequestProcessor) handleUnsubscription(conn *websocket.Conn, currPair string) {
 	slog.Info("Order Book Unsubscription Requested", "curr pair", currPair)
 	p.subs.SubUser(conn, currPair, false)

@@ -14,7 +14,7 @@ type Client struct {
 	storeUpdater *binance.OBUpdater
 }
 
-// wire everything on upstream and return the client struct
+// NewClient wire everything on upstream and return the client struct.
 func NewClient(handler binance.Updater, subHandler *subscribers.Handler) *Client {
 	// make required channels
 	updateIdChan := make(chan int)
@@ -36,9 +36,10 @@ func NewClient(handler binance.Updater, subHandler *subscribers.Handler) *Client
 	}
 }
 
-func (c *Client) InitClient(g *errgroup.Group, ctx context.Context) {
+func (c *Client) InitClient(g *errgroup.Group, ctx context.Context) error {
 	c.storeUpdater.InitOrderBook(c.mainCurrPair)
-	c.upstream.initUpstream(ctx, g, c.mainCurrPair)
+
+	return c.upstream.initUpstream(ctx, g, c.mainCurrPair)
 }
 
 func (c *Client) SetMainCurrencyPair(currencyPair string) {

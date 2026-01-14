@@ -2,7 +2,7 @@ package downstream
 
 import "context"
 
-// provides abstraction of the downstream server for the application
+// Server provides abstraction of the downstream server for the application.
 type Server interface {
 	StartServer() error
 	ShutDown(ctx context.Context) error

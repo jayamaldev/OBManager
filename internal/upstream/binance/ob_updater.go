@@ -31,9 +31,10 @@ func (u *OBUpdater) updateSnapshot(currPair string, snapshot *dtos.Snapshot) {
 	u.processAsks(currPair, snapshot.Asks)
 }
 
-// proceess bids and populate order book
+// process bids and populate order book.
 func (u *OBUpdater) processBids(currPair string, bids [][]string) {
 	bidsMap := make(map[float64]float64)
+
 	for _, bidEntry := range bids {
 		price, err := strconv.ParseFloat(bidEntry[0], 64)
 		if err != nil {
@@ -47,12 +48,14 @@ func (u *OBUpdater) processBids(currPair string, bids [][]string) {
 
 		bidsMap[price] = qty
 	}
+
 	u.UpdateBids(currPair, bidsMap)
 }
 
-// proceess asks and populate order book
+// process asks and populate order book.
 func (u *OBUpdater) processAsks(currPair string, asks [][]string) {
 	asksMap := make(map[float64]float64)
+
 	for _, askEntry := range asks {
 		price, err := strconv.ParseFloat(askEntry[0], 64)
 		if err != nil {
@@ -66,5 +69,6 @@ func (u *OBUpdater) processAsks(currPair string, asks [][]string) {
 
 		asksMap[price] = qty
 	}
+
 	u.UpdateBids(currPair, asksMap)
 }
