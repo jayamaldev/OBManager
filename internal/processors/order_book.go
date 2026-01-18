@@ -5,8 +5,9 @@ import (
 )
 
 type OrderBook struct {
-	Bids *tree.Tree
-	Asks *tree.Tree
+	Bids         *tree.Tree
+	Asks         *tree.Tree
+	lastUpdateId int
 }
 
 func NewOrderBook() *OrderBook {

@@ -2,17 +2,19 @@ package processors
 
 import (
 	"log/slog"
+	"ob-manager/internal/dtos"
 	"strconv"
+	"sync"
 )
 
 type Processor struct {
 	DeQueuer
 	OutQ
 
-	currency     string
-	lastUpdateId int
-	isReady      chan bool
-	ob           *OrderBook
+	mu       sync.Mutex
+	currency string
+	isReady  chan bool
+	ob       *OrderBook
 }
 
 func NewProcessor(currency string, outQ OutQ, deQueuer DeQueuer) *Processor {
@@ -26,11 +28,14 @@ func NewProcessor(currency string, outQ OutQ, deQueuer DeQueuer) *Processor {
 }
 
 func (p *Processor) OrderBook() *OrderBook {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	return p.ob
 }
 
 func (p *Processor) SetReady(lastUpdateId int) {
-	p.lastUpdateId = lastUpdateId
+	p.ob.lastUpdateId = lastUpdateId
 	p.isReady <- true
 }
 
@@ -41,24 +46,31 @@ func (p *Processor) startProcessor() {
 		event := <-p.DeQueue(p.currency)
 
 		// discard unnecessary bids/asks
-		if event.FinalUpdateId < p.lastUpdateId {
+		if event.FinalUpdateId < p.ob.lastUpdateId {
 			// discard
-			slog.Info("Discarding event.", "curr", p.currency, "Final Id", event.FinalUpdateId, "Last Id", p.lastUpdateId)
+			slog.Info("Discarding event.", "curr", p.currency, "Final Id", event.FinalUpdateId, "Last Id", p.ob.lastUpdateId)
 
 			continue
 		}
 
-		slog.Debug("Processing event.", "curr", p.currency, "Final Id", event.FinalUpdateId, "Last Id", p.lastUpdateId)
+		slog.Debug("Processing event.", "curr", p.currency, "Final Id", event.FinalUpdateId, "Last Id", p.ob.lastUpdateId)
 
 		//process event
-		p.processEventBids(event.Bids)
-		p.processEventAsks(event.Asks)
-
-		p.lastUpdateId = event.FinalUpdateId
+		p.updateOrderBook(event)
 
 		// push update to users
 		p.AddToOutQ(event)
 	}
+}
+
+func (p *Processor) updateOrderBook(event *dtos.EventUpdate) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.processEventBids(event.Bids)
+	p.processEventAsks(event.Asks)
+
+	p.ob.lastUpdateId = event.FinalUpdateId
 }
 
 // process bids and populate order book.

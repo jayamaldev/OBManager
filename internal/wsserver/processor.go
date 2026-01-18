@@ -14,20 +14,12 @@ type SubscriptionManager interface {
 	RemoveUser(conn *websocket.Conn)
 }
 
-// OBReader provides abstraction of order book for the downstream server.
-type OBReader interface {
-	GetOrderBook(curr string) []byte
-}
-
 type RequestProcessor struct {
 	SubscriptionManager
-
-	obReader OBReader
 }
 
-func NewProcessor(obReader OBReader, subs SubscriptionManager) *RequestProcessor {
+func NewProcessor(subs SubscriptionManager) *RequestProcessor {
 	return &RequestProcessor{
-		obReader:            obReader,
 		SubscriptionManager: subs,
 	}
 }
@@ -75,12 +67,6 @@ func (p *RequestProcessor) handleConnection(conn *websocket.Conn) {
 // handle user subscription request. add currency subscription to the user and send latest order book.
 func (p *RequestProcessor) handleSubscription(conn *websocket.Conn, currPair string) {
 	slog.Info("Order Book Subscription Requested", "currency pair", currPair)
-	err := conn.WriteMessage(websocket.TextMessage, p.obReader.GetOrderBook(currPair))
-
-	if err != nil {
-		slog.Error("Error Writing Message: ", "error", err)
-	}
-
 	p.AddSubscription(currPair, conn)
 }
 

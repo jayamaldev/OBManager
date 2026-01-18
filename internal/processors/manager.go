@@ -40,15 +40,18 @@ func (m *Manager) Processor(currency string) *Processor {
 }
 
 // GetOrderBook parses order book to a JSON to send to the subscriber.
-func (m *Manager) GetOrderBook(curr string) []byte {
+func (m *Manager) GetOrderBook(curr string) ([]byte, int) {
 	proc := m.processors[curr]
-	jsonStr, err := json.Marshal(proc.OrderBook())
+	ob := proc.OrderBook()
+	lastUpdateId := ob.lastUpdateId
+
+	jsonStr, err := json.Marshal(ob)
 
 	if err != nil {
 		slog.Error("error on parsing order book to json", "Err", err)
 	}
 
-	return jsonStr
+	return jsonStr, lastUpdateId
 }
 
 // UpdateBids updates the bids from the snapshot.

@@ -22,23 +22,23 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// in queue manager
+	// in queues manager
 	inQueue := inqueues.NewQManager()
 
 	// out queue manager
 	outQueue := outqueues.NewQueue()
 
-	// initialize downstream subscribers store
-	subManager := subscriptions.NewManager(outQueue)
-
-	// process Managers
+	// order book processes Manager
 	procManager := processors.NewManager(inQueue, outQueue)
+
+	// initialize downstream subscribers store
+	subManager := subscriptions.NewManager(outQueue, procManager)
 
 	// start upstream client and connect to market data provider
 	initUpstreamClient(ctx, inQueue, procManager)
 
 	// start downstream server
-	server := startDownstreamServer(procManager, subManager)
+	server := startDownstreamServer(subManager)
 	go server.StartServer()
 
 	// start the push handler for the subscribed users
@@ -77,8 +77,8 @@ func initUpstreamClient(ctx context.Context, queue *inqueues.InQManager, proc *p
 }
 
 // start websocket server.
-func startDownstreamServer(ob *processors.Manager, sub *subscriptions.Manager) *wsserver.WSServer {
-	processor := wsserver.NewProcessor(ob, sub)
+func startDownstreamServer(sub *subscriptions.Manager) *wsserver.WSServer {
+	processor := wsserver.NewProcessor(sub)
 	server := wsserver.NewWSServer(processor)
 
 	return server
