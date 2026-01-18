@@ -60,3 +60,8 @@ func (m *Manager) UpdateBids(currency string, bids map[float64]float64) {
 func (m *Manager) UpdateAsks(currency string, asks map[float64]float64) {
 	m.processors[currency].updateAsks(asks)
 }
+
+func (m *Manager) ResetProcessors() {
+	clear(m.processors)
+	slog.Info("Processors reset and Order Books Cleared")
+}

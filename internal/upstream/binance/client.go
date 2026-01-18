@@ -8,11 +8,19 @@ import (
 	"net/url"
 	"ob-manager/internal/dtos"
 	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
 
-type OBUpdater interface {
+const (
+	readDeadLineTime = 60 * time.Second
+	maxWait          = 60 * time.Second
+)
+
+type ProcManager interface {
+	ResetProcessors()
+	StartProcessor(currency string)
 	UpdateBids(currency string, bids map[float64]float64)
 	UpdateAsks(currency string, asks map[float64]float64)
 }
@@ -28,7 +36,7 @@ type QueueAdder interface {
 type Client struct {
 	QueueAdder
 	SnapshotGetter
-	OBUpdater
+	ProcManager
 
 	conn         *websocket.Conn
 	requests     chan []byte
@@ -36,9 +44,9 @@ type Client struct {
 	bufferedMsgs chan []byte
 }
 
-func NewClient(requests chan []byte, q QueueAdder, updater OBUpdater) *Client {
+func NewClient(requests chan []byte, q QueueAdder, proc ProcManager) *Client {
 	idGen := NewIDGenerator()
-	getter := NewRestClient(updater)
+	getter := NewRestClient(proc)
 	bufferSize := 20000
 
 	return &Client{
@@ -47,41 +55,52 @@ func NewClient(requests chan []byte, q QueueAdder, updater OBUpdater) *Client {
 		bufferedMsgs:   make(chan []byte, bufferSize),
 		QueueAdder:     q,
 		SnapshotGetter: getter,
+		ProcManager:    proc,
 	}
 }
 
 // ConnectToServer todo handle disconnections.
-func (c *Client) ConnectToServer() error {
+func (c *Client) ConnectToServer(ctx context.Context) {
 	u := url.URL{
 		Scheme: wssStream,
 		Host:   binanceUrl,
 		Path:   wsContextRoot,
 	}
 
-	slog.Info("connecting to websocket", "url", u.String())
+	waitTime := 1 * time.Second
 
-	conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	for {
+		slog.Info("connecting to websocket", "url", u.String())
 
-	if err != nil {
-		slog.Error("Websocket connectivity issue", "Error", err)
+		conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 
-		return err
-	}
-
-	slog.Info("Connected to websocket", "url", u.String())
-
-	c.conn = conn
-
-	go func() {
-		err := c.readWSMessages()
 		if err != nil {
-			slog.Error("Websocket read error", "Error", err) // todo handle this error.
+			slog.Error("Websocket connectivity issue", "Error", err)
+		} else {
+			slog.Info("Connected to websocket", "url", u.String())
+
+			waitTime = 1 * time.Second //reset wait time
+
+			c.conn = conn
+
+			// subscribe to default currency list
+			c.subscribeToCurrencies(ctx)
+
+			err = c.readWSMessages()
+			if err != nil {
+				slog.Error("Websocket read error", "Error", err)
+				c.ResetProcessors()
+			}
 		}
-	}()
 
-	return nil
+		select {
+		case <-ctx.Done():
+			break
+		case <-time.After(waitTime):
+			waitTime = min(waitTime*2, maxWait)
+		}
+	}
 }
-
 func (c *Client) SendRequests() error {
 	for {
 		request := <-c.requests
@@ -106,28 +125,6 @@ func (c *Client) CloseConnection() error {
 
 		return err
 	}
-
-	return nil
-}
-
-func (c *Client) SubscribeToCurrPair(currencyPair string) error {
-	depthRequest := fmt.Sprintf(depthStr, strings.ToLower(currencyPair))
-	subscriptionRequest := dtos.SubscriptionRequest{
-		Method: subscribe,
-		Params: []string{depthRequest},
-		Id:     c.idGen.getUniqueReqId(),
-	}
-
-	slog.Info("Subscription currency pair", "curr pair", currencyPair)
-
-	subsRequest, err := json.Marshal(subscriptionRequest)
-	slog.Info("Subscription", "Request", string(subsRequest))
-
-	if err != nil {
-		slog.Error("Error on parsing subscription request", "Error", err)
-	}
-
-	c.requests <- subsRequest
 
 	return nil
 }
@@ -182,7 +179,70 @@ func (c *Client) ProcessMessage() error {
 	return nil
 }
 
+// subscribeToCurrencies todo get currencies list from configurations.
+func (c *Client) subscribeToCurrencies(ctx context.Context) {
+	currencies := []string{"BTCUSDT", "ETHUSDT"}
+
+	for _, currency := range currencies {
+		slog.Info("Subscribing", "currency", currency)
+
+		go func(curr string) {
+			err := c.subscribeToCurrPair(curr)
+			if err != nil {
+				slog.Error("Error in subscribing", "Currency", currency, err)
+			}
+		}(currency)
+
+		go func(ctx context.Context, curr string) {
+			err := c.GetSnapshot(ctx, curr)
+			if err != nil {
+				slog.Error("Error in getting snapshot", "Currency", currency, err)
+			}
+		}(ctx, currency)
+
+		go func(curr string) {
+			c.StartProcessor(curr)
+		}(currency)
+	}
+}
+
+func (c *Client) subscribeToCurrPair(currencyPair string) error {
+	depthRequest := fmt.Sprintf(depthStr, strings.ToLower(currencyPair))
+	subscriptionRequest := dtos.SubscriptionRequest{
+		Method: subscribe,
+		Params: []string{depthRequest},
+		Id:     c.idGen.getUniqueReqId(),
+	}
+
+	slog.Info("Subscription currency pair", "curr pair", currencyPair)
+
+	subsRequest, err := json.Marshal(subscriptionRequest)
+	slog.Info("Subscription", "Request", string(subsRequest))
+
+	if err != nil {
+		slog.Error("Error on parsing subscription request", "Error", err)
+	}
+
+	c.requests <- subsRequest
+
+	return nil
+}
+
 func (c *Client) readWSMessages() error {
+	err := c.conn.SetReadDeadline(time.Now().Add(readDeadLineTime))
+	if err != nil {
+		slog.Error("Error on setting read deadline", "Error", err)
+	}
+
+	c.conn.SetPongHandler(func(string) error {
+		err := c.conn.SetReadDeadline(time.Now().Add(readDeadLineTime))
+		if err != nil {
+			slog.Error("Error on setting read deadline", "Error", err)
+		}
+
+		return nil
+	})
+
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
@@ -195,6 +255,12 @@ func (c *Client) readWSMessages() error {
 
 		if len(message) > 0 {
 			c.bufferedMsgs <- message
+		}
+
+		// extend read deadline
+		err = c.conn.SetReadDeadline(time.Now().Add(readDeadLineTime))
+		if err != nil {
+			slog.Error("Error on setting read deadline", "Error", err)
 		}
 	}
 }

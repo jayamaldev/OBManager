@@ -11,12 +11,12 @@ import (
 )
 
 type RestClient struct {
-	OBUpdater
+	ProcManager
 }
 
-func NewRestClient(updater OBUpdater) *RestClient {
+func NewRestClient(updater ProcManager) *RestClient {
 	return &RestClient{
-		OBUpdater: updater,
+		ProcManager: updater,
 	}
 }
 
