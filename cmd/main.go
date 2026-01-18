@@ -8,126 +8,99 @@ import (
 	"syscall"
 	"time"
 
-	"ob-manager/internal/downstream"
-	"ob-manager/internal/downstream/wsserver"
-	"ob-manager/internal/orderbook"
-	"ob-manager/internal/subscribers"
-	"ob-manager/internal/upstream"
-
-	"golang.org/x/sync/errgroup"
+	"ob-manager/internal/processors"
+	"ob-manager/internal/queues/in"
+	"ob-manager/internal/queues/out"
+	"ob-manager/internal/subscriptions"
+	"ob-manager/internal/upstream/binance"
+	"ob-manager/internal/wsserver"
 )
 
-type ContextGroup struct {
-	g   *errgroup.Group
-	ctx context.Context
-}
-
-func NewContextGroup(ctx context.Context, g *errgroup.Group) *ContextGroup {
-	return &ContextGroup{
-		g:   g,
-		ctx: ctx,
-	}
-}
-
 func main() {
+	slog.Info("Starting Binance Distributor Service")
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	g, ctx := errgroup.WithContext(ctx)
-	cg := NewContextGroup(ctx, g)
+	// in queues manager
+	inQueue := inqueues.NewQManager()
 
-	// initialize order book store
-	storeHandler := initOrderBookStore()
+	// out queue manager
+	outQueue := outqueues.NewQueue()
+
+	// order book processes Manager
+	procManager := processors.NewManager(inQueue, outQueue)
 
 	// initialize downstream subscribers store
-	subHandler := initSubscriptionHandler()
+	subManager := subscriptions.NewManager(outQueue, procManager)
 
 	// start upstream client and connect to market data provider
-	client := initUpstreamClient(storeHandler, subHandler)
-
-	g.Go(func() error {
-		return client.InitClient(cg.g, cg.ctx)
-	})
+	initUpstreamClient(ctx, inQueue, procManager)
 
 	// start downstream server
-	server := startDownstreamServer(storeHandler, subHandler)
+	server := startDownstreamServer(subManager)
+	go server.StartServer()
 
-	g.Go(func() error {
-		return server.StartServer()
-	})
+	// start the push handler for the subscribed users
+	subManager.StartPushHandler()
 
-	g.Go(func() error {
-		return gracefulShutdown(cg, client, server)
-	})
-
-	if err := g.Wait(); err != nil {
-		slog.Error("Error on OrderBook Distributor Service", "Error", err)
-	}
+	gracefulShutdown(ctx, server)
 
 	slog.Info("Exiting OrderBook Distributor Service")
 }
 
-// initialize order book store.
-func initOrderBookStore() *orderbook.StoreHandler {
-	obStore := orderbook.NewStore()
+func initUpstreamClient(ctx context.Context, queue *inqueues.InQManager, proc *processors.Manager) *binance.Client {
+	slog.Info("Initializing Binance Client")
 
-	return orderbook.NewStoreHandler(obStore)
-}
+	requests := make(chan []byte)
+	client := binance.NewClient(requests, queue, proc)
 
-// initialize downstream subscribers store.
-func initSubscriptionHandler() *subscribers.Handler {
-	subsStore := subscribers.NewUserStore()
+	go func() {
+		client.ConnectToServer(ctx)
+	}()
 
-	return subscribers.NewHandler(subsStore)
-}
+	go func() {
+		err := client.SendRequests()
+		if err != nil {
+			slog.Error("Error in sending requests: ", err)
+		}
+	}()
 
-// start websocket server with error group.
-func initUpstreamClient(ob *orderbook.StoreHandler, subs *subscribers.Handler) *upstream.Client {
-	client := upstream.NewClient(ob, subs)
-	client.SetMainCurrencyPair("BTCUSDT")
+	go func() {
+		err := client.ProcessMessage()
+		if err != nil {
+			slog.Error("Error in processing message: ", err)
+		}
+	}()
 
 	return client
 }
 
-// start websocket server with error group.
-func startDownstreamServer(ob *orderbook.StoreHandler, sub *subscribers.Handler) *downstream.Handler {
-	processor := wsserver.NewProcessor(ob, sub)
+// start websocket server.
+func startDownstreamServer(sub *subscriptions.Manager) *wsserver.WSServer {
+	processor := wsserver.NewProcessor(sub)
 	server := wsserver.NewWSServer(processor)
-	dsHandler := downstream.NewHandler(server)
 
-	return dsHandler
+	return server
 }
 
 // handle graceful shutdown.
-func gracefulShutdown(cg *ContextGroup, client *upstream.Client, dsHandler *downstream.Handler) error {
+func gracefulShutdown(ctx context.Context, server *wsserver.WSServer) {
 	slog.Info("Graceful Shutdown is monitoring")
 
-	<-cg.ctx.Done()
+	<-ctx.Done()
 
 	slog.Info("Shutdown Signal Received")
 
 	var timeDuration = 30 * time.Second
-	ctx, cancel := context.WithTimeout(cg.ctx, timeDuration)
+	ctx, cancel := context.WithTimeout(ctx, timeDuration)
 
 	defer cancel()
 
-	err := client.CloseClient()
+	err := server.Shutdown(ctx)
 	if err != nil {
-		slog.Error("Forced Shutdown: ", "Error", err)
-
-		return err
+		slog.Error("Error in closing web socket server: ", "Error", err)
 	}
-
-	slog.Info("Websocket Client Closed")
-
-	err = dsHandler.ShutDown(ctx)
-	if err != nil {
-		slog.Error("Forced Shutdown: ", "Error", err)
-	}
-
-	slog.Info("Websocket Server Closed")
 
 	slog.Info("Server Exited Gracefully")
-
-	return nil
 }

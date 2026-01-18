@@ -9,41 +9,31 @@ import (
 
 // SubscriptionManager provides abstraction of subscription user manager for the downstream server.
 type SubscriptionManager interface {
-	AddNewUser(conn *websocket.Conn)
+	AddSubscription(currency string, conn *websocket.Conn)
+	RemoveSubscription(currency string, conn *websocket.Conn)
 	RemoveUser(conn *websocket.Conn)
-	SubUser(conn *websocket.Conn, currPair string, sub bool)
-}
-
-// OBReader provides abstraction of order book for the downstream server.
-type OBReader interface {
-	GetOrderBook(curr string) []byte
 }
 
 type RequestProcessor struct {
-	obReader OBReader
-	subs     SubscriptionManager
+	SubscriptionManager
 }
 
-func NewProcessor(obReader OBReader, subs SubscriptionManager) *RequestProcessor {
+func NewProcessor(subs SubscriptionManager) *RequestProcessor {
 	return &RequestProcessor{
-		obReader: obReader,
-		subs:     subs,
+		SubscriptionManager: subs,
 	}
 }
 
 func (p *RequestProcessor) handleConnection(conn *websocket.Conn) {
 	// remove user from the store when closing the connection
 	defer func() {
-		p.subs.RemoveUser(conn)
+		p.RemoveUser(conn)
 		err := conn.Close()
 
 		if err != nil {
 			slog.Error("Error on Closing the Connection", "error", err)
 		}
 	}()
-
-	// separate user for each connection to manage subscriptions
-	p.subs.AddNewUser(conn)
 
 	for {
 		_, message, err := conn.ReadMessage()
@@ -77,17 +67,11 @@ func (p *RequestProcessor) handleConnection(conn *websocket.Conn) {
 // handle user subscription request. add currency subscription to the user and send latest order book.
 func (p *RequestProcessor) handleSubscription(conn *websocket.Conn, currPair string) {
 	slog.Info("Order Book Subscription Requested", "currency pair", currPair)
-	err := conn.WriteMessage(websocket.TextMessage, p.obReader.GetOrderBook(currPair))
-
-	if err != nil {
-		slog.Error("Error Writing Message: ", "error", err)
-	}
-
-	p.subs.SubUser(conn, currPair, true)
+	p.AddSubscription(currPair, conn)
 }
 
 // handle user unsubscription request. remove currency subscription from the user.
 func (p *RequestProcessor) handleUnsubscription(conn *websocket.Conn, currPair string) {
 	slog.Info("Order Book Unsubscription Requested", "curr pair", currPair)
-	p.subs.SubUser(conn, currPair, false)
+	p.RemoveSubscription(currPair, conn)
 }
