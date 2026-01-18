@@ -3,8 +3,9 @@ package subscriptions
 import (
 	"encoding/json"
 	"log/slog"
-	"ob-manager/internal/dtos"
 	"slices"
+
+	"ob-manager/internal/dtos"
 
 	"github.com/gorilla/websocket"
 )

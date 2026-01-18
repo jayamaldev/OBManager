@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"ob-manager/internal/dtos"
 	"strings"
 	"time"
+
+	"ob-manager/internal/dtos"
 
 	"github.com/gorilla/websocket"
 )
@@ -48,7 +49,7 @@ type Client struct {
 func NewClient(requests chan []byte, q QueueAdder, proc ProcManager) *Client {
 	idGen := NewIDGenerator()
 	getter := NewRestClient(proc)
-	bufferSize := 20000
+	bufferSize := 50000
 
 	return &Client{
 		idGen:          idGen,
@@ -102,7 +103,7 @@ func (c *Client) ConnectToServer(ctx context.Context) {
 		}
 	}
 }
-func (c *Client) SendRequests() error {
+func (c *Client) SendRequests() {
 	for {
 		request := <-c.requests
 		slog.Info("Sending Web Socket Request", "Request", request)
@@ -110,27 +111,21 @@ func (c *Client) SendRequests() error {
 
 		if err != nil {
 			slog.Error("Error on sending subscription request", "Error", err)
-
-			return err
 		}
 	}
 }
 
-func (c *Client) CloseConnection() error {
+func (c *Client) CloseConnection() {
 	close(c.requests)
 
 	err := c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 
 	if err != nil {
 		slog.Error("Error on writing close request to websocket", "Error", err)
-
-		return err
 	}
-
-	return nil
 }
 
-func (c *Client) ProcessMessage() error {
+func (c *Client) ProcessMessage() {
 	slog.Info("started binance message processors")
 
 	var rawMap map[string]interface{}
@@ -149,7 +144,7 @@ func (c *Client) ProcessMessage() error {
 		if err != nil {
 			slog.Error("Error on unmarshalling message", "Error", err)
 
-			break
+			continue
 		}
 
 		_, ok := rawMap["id"].(string)
@@ -160,7 +155,7 @@ func (c *Client) ProcessMessage() error {
 			if err != nil {
 				slog.Error("Error Parsing Subscriptions List Json", "Error", err)
 
-				break
+				continue
 			}
 
 			c.processSubscriptionList(subscriptionsList, message)
@@ -170,14 +165,12 @@ func (c *Client) ProcessMessage() error {
 			if err != nil {
 				slog.Error("Error Parsing Json", "Error", err)
 
-				break
+				continue
 			}
 
 			c.processMarketDepthUpdate(eventUpdate)
 		}
 	}
-
-	return nil
 }
 
 // subscribeToCurrencies todo get currencies list from configurations.

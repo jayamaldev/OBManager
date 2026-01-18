@@ -60,17 +60,11 @@ func initUpstreamClient(ctx context.Context, queue *inqueues.InQManager, proc *p
 	}()
 
 	go func() {
-		err := client.SendRequests()
-		if err != nil {
-			slog.Error("Error in sending requests: ", err)
-		}
+		client.SendRequests()
 	}()
 
 	go func() {
-		err := client.ProcessMessage()
-		if err != nil {
-			slog.Error("Error in processing message: ", err)
-		}
+		client.ProcessMessage()
 	}()
 
 	return client

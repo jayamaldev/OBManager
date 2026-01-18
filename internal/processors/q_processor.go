@@ -2,9 +2,10 @@ package processors
 
 import (
 	"log/slog"
-	"ob-manager/internal/dtos"
 	"strconv"
 	"sync"
+
+	"ob-manager/internal/dtos"
 )
 
 type Processor struct {
@@ -15,6 +16,7 @@ type Processor struct {
 	currency string
 	isReady  chan bool
 	ob       *OrderBook
+	quit     chan struct{}
 }
 
 func NewProcessor(currency string, outQ OutQ, deQueuer DeQueuer) *Processor {
@@ -23,6 +25,7 @@ func NewProcessor(currency string, outQ OutQ, deQueuer DeQueuer) *Processor {
 		DeQueuer: deQueuer,
 		OutQ:     outQ,
 		isReady:  make(chan bool),
+		quit:     make(chan struct{}),
 		ob:       NewOrderBook(),
 	}
 }
@@ -43,23 +46,28 @@ func (p *Processor) startProcessor() {
 	<-p.isReady
 
 	for {
-		event := <-p.DeQueue(p.currency)
+		select {
+		case <-p.quit:
+			slog.Info("Processor Quitting.", "Currency", p.currency)
 
-		// discard unnecessary bids/asks
-		if event.FinalUpdateId < p.ob.lastUpdateId {
-			// discard
-			slog.Info("Discarding event.", "curr", p.currency, "Final Id", event.FinalUpdateId, "Last Id", p.ob.lastUpdateId)
+			return
+		case event := <-p.DeQueue(p.currency):
+			// discard unnecessary bids/asks
+			if event.FinalUpdateId < p.ob.lastUpdateId {
+				// discard
+				slog.Info("Discarding event.", "curr", p.currency, "Final Id", event.FinalUpdateId, "Last Id", p.ob.lastUpdateId)
 
-			continue
+				continue
+			}
+
+			slog.Debug("Processing event.", "curr", p.currency, "Final Id", event.FinalUpdateId, "Last Id", p.ob.lastUpdateId)
+
+			//process event
+			p.updateOrderBook(event)
+
+			// push update to users
+			p.AddToOutQ(event)
 		}
-
-		slog.Debug("Processing event.", "curr", p.currency, "Final Id", event.FinalUpdateId, "Last Id", p.ob.lastUpdateId)
-
-		//process event
-		p.updateOrderBook(event)
-
-		// push update to users
-		p.AddToOutQ(event)
 	}
 }
 
@@ -112,7 +120,7 @@ func (p *Processor) processEventAsks(asks [][]string) {
 		asksMap[price] = qty
 	}
 
-	p.updateBids(asksMap)
+	p.updateAsks(asksMap)
 }
 
 func (p *Processor) updateBids(bids map[float64]float64) {
@@ -125,4 +133,8 @@ func (p *Processor) updateAsks(asks map[float64]float64) {
 	for price, qty := range asks {
 		p.ob.Asks.Put(price, qty)
 	}
+}
+
+func (p *Processor) stopProcessor() {
+	close(p.quit)
 }

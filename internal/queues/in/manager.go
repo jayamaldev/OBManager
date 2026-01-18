@@ -1,8 +1,9 @@
 package inqueues
 
 import (
-	"ob-manager/internal/dtos"
 	"sync"
+
+	"ob-manager/internal/dtos"
 )
 
 const (

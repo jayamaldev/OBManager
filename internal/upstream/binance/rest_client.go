@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"ob-manager/internal/dtos"
 	"strconv"
+
+	"ob-manager/internal/dtos"
 )
 
 type RestClient struct {
