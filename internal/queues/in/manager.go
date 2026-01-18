@@ -21,12 +21,16 @@ func NewQManager() *InQManager {
 }
 
 func (m *InQManager) AddToQueue(eventUpdate *dtos.EventUpdate) {
-	m.initQueue(eventUpdate.Symbol)
+	if m.queues[eventUpdate.Symbol] == nil {
+		m.initQueue(eventUpdate.Symbol)
+	}
 	m.queues[eventUpdate.Symbol] <- eventUpdate
 }
 
 func (m *InQManager) DeQueue(symbol string) <-chan *dtos.EventUpdate {
-	m.initQueue(symbol)
+	if m.queues[symbol] == nil {
+		m.initQueue(symbol)
+	}
 
 	return m.queues[symbol]
 }

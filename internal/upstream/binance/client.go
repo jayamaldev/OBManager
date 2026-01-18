@@ -21,6 +21,7 @@ const (
 type ProcManager interface {
 	ResetProcessors()
 	StartProcessor(currency string)
+	SetOrderBookReady(currency string, lastUpdateId int)
 	UpdateBids(currency string, bids map[float64]float64)
 	UpdateAsks(currency string, asks map[float64]float64)
 }
@@ -59,7 +60,7 @@ func NewClient(requests chan []byte, q QueueAdder, proc ProcManager) *Client {
 	}
 }
 
-// ConnectToServer todo handle disconnections.
+// ConnectToServer connects with binance server and reads responses.
 func (c *Client) ConnectToServer(ctx context.Context) {
 	u := url.URL{
 		Scheme: wssStream,

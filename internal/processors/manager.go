@@ -61,6 +61,12 @@ func (m *Manager) UpdateAsks(currency string, asks map[float64]float64) {
 	m.processors[currency].updateAsks(asks)
 }
 
+// SetOrderBookReady marks order book is populated and ready to process push events.
+func (m *Manager) SetOrderBookReady(currency string, lastUpdateId int) {
+	m.processors[currency].SetReady(lastUpdateId)
+}
+
+// ResetProcessors clears all order books and prepare for a reconnection.
 func (m *Manager) ResetProcessors() {
 	clear(m.processors)
 	slog.Info("Processors reset and Order Books Cleared")

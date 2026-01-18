@@ -68,6 +68,9 @@ func (c *RestClient) updateSnapshot(currPair string, snapshot *dtos.Snapshot) {
 
 	// process asks
 	c.processAsks(currPair, snapshot.Asks)
+
+	// flag snapshot populated. start consuming push events.
+	c.SetOrderBookReady(currPair, snapshot.LastUpdateId)
 }
 
 // process bids and populate order book.

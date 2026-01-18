@@ -9,8 +9,10 @@ type Processor struct {
 	DeQueuer
 	OutQ
 
-	currency string
-	ob       *OrderBook
+	currency     string
+	lastUpdateId int
+	isReady      chan bool
+	ob           *OrderBook
 }
 
 func NewProcessor(currency string, outQ OutQ, deQueuer DeQueuer) *Processor {
@@ -18,6 +20,7 @@ func NewProcessor(currency string, outQ OutQ, deQueuer DeQueuer) *Processor {
 		currency: currency,
 		DeQueuer: deQueuer,
 		OutQ:     outQ,
+		isReady:  make(chan bool),
 		ob:       NewOrderBook(),
 	}
 }
@@ -26,13 +29,32 @@ func (p *Processor) OrderBook() *OrderBook {
 	return p.ob
 }
 
+func (p *Processor) SetReady(lastUpdateId int) {
+	p.lastUpdateId = lastUpdateId
+	p.isReady <- true
+}
+
 func (p *Processor) startProcessor() {
+	<-p.isReady
+
 	for {
 		event := <-p.DeQueue(p.currency)
+
+		// discard unnecessary bids/asks
+		if event.FinalUpdateId < p.lastUpdateId {
+			// discard
+			slog.Info("Discarding event.", "curr", p.currency, "Final Id", event.FinalUpdateId, "Last Id", p.lastUpdateId)
+
+			continue
+		}
+
+		slog.Debug("Processing event.", "curr", p.currency, "Final Id", event.FinalUpdateId, "Last Id", p.lastUpdateId)
 
 		//process event
 		p.processEventBids(event.Bids)
 		p.processEventAsks(event.Asks)
+
+		p.lastUpdateId = event.FinalUpdateId
 
 		// push update to users
 		p.AddToOutQ(event)
