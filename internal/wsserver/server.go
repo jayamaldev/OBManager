@@ -33,18 +33,14 @@ func NewWSServer(proc Processor) *WSServer {
 	}
 }
 
-func (s *WSServer) StartServer() error {
+func (s *WSServer) StartServer() {
 	http.HandleFunc("/ws", s.websocketHandler)
 	slog.Info("Websocket Server started on :8080")
 
 	err := s.ListenAndServe()
 	if err != nil {
 		slog.Error("Error on websocket Server: ", "Error", err)
-
-		return err
 	}
-
-	return nil
 }
 
 func (s *WSServer) ShutDown(ctx context.Context) error {
