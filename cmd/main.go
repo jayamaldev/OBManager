@@ -3,17 +3,17 @@ package main
 import (
 	"context"
 	"log/slog"
+	"ob-manager/internal/processors"
+	"ob-manager/internal/subscriptions"
+	"ob-manager/internal/upstream/binance"
+	"ob-manager/internal/wsserver"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"ob-manager/internal/processors"
-	"ob-manager/internal/queues/in"
-	"ob-manager/internal/queues/out"
-	"ob-manager/internal/subscriptions"
-	"ob-manager/internal/upstream/binance"
-	"ob-manager/internal/wsserver"
+	inqueues "ob-manager/internal/queues/in"
+	outqueues "ob-manager/internal/queues/out"
 )
 
 func main() {
@@ -56,15 +56,15 @@ func initUpstreamClient(ctx context.Context, queue *inqueues.InQManager, proc *p
 	client := binance.NewClient(requests, queue, proc)
 
 	go func() {
-		client.ConnectToServer(ctx)
+		client.ConnectToServer(ctx) // FEEDBACK: Do not expose requirements of managing go routines to the caller. Client should manage its own goroutines internally.
 	}()
 
 	go func() {
-		client.SendRequests()
+		client.SendRequests() // FEEDBACK: why is this method called in main.go ? Shouldn't it be part of ConnectToServer or inside Client itself ?
 	}()
 
 	go func() {
-		client.ProcessMessage()
+		client.ProcessMessage() // FEEDBACK: why is this method called in main.go ? Shouldn't it be part of ConnectToServer or inside Client itself ?
 	}()
 
 	return client
@@ -86,7 +86,7 @@ func gracefulShutdown(ctx context.Context, server *wsserver.WSServer) {
 
 	slog.Info("Shutdown Signal Received")
 
-	var timeDuration = 30 * time.Second
+	timeDuration := 30 * time.Second
 	ctx, cancel := context.WithTimeout(ctx, timeDuration)
 
 	defer cancel()

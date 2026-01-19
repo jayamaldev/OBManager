@@ -51,11 +51,10 @@ func (m *Manager) Processor(currency string) *Processor {
 // GetOrderBook parses order book to a JSON to send to the subscriber.
 func (m *Manager) GetOrderBook(curr string) ([]byte, int) {
 	proc := m.Processor(curr)
-	ob := proc.OrderBook()
+	ob := proc.OrderBook() // FEEDBACK: this reference is not thread safe if OrderBook() returns pointer to internal state directly. it keeps changing while being read.
 	lastUpdateId := ob.lastUpdateId
 
 	jsonStr, err := json.Marshal(ob)
-
 	if err != nil {
 		slog.Error("error on parsing order book to json", "Err", err)
 	}

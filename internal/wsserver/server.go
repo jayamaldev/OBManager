@@ -18,7 +18,7 @@ type Processor interface {
 
 type WSServer struct {
 	*http.Server
-	Processor
+	Processor // FEEDBACK: Why embedding the interface here ? This will expose the methods of Processor on WSServer.
 }
 
 func NewWSServer(proc Processor) *WSServer {

@@ -1,9 +1,8 @@
 package inqueues
 
 import (
-	"sync"
-
 	"ob-manager/internal/dtos"
+	"sync"
 )
 
 const (
@@ -22,13 +21,13 @@ func NewQManager() *InQManager {
 }
 
 func (m *InQManager) AddToQueue(eventUpdate *dtos.EventUpdate) {
-	if m.queues[eventUpdate.Symbol] == nil {
+	if m.queues[eventUpdate.Symbol] == nil { // FEEDBACK - Race condition not protected by . AddToQueue() and DeQueue() can be called concurrently.
 		m.initQueue(eventUpdate.Symbol)
 	}
 	m.queues[eventUpdate.Symbol] <- eventUpdate
 }
 
-func (m *InQManager) DeQueue(symbol string) <-chan *dtos.EventUpdate {
+func (m *InQManager) DeQueue(symbol string) <-chan *dtos.EventUpdate { // FEEDBACK: change the name to Queue() or GetQueue() as DeQueue usually means removing an item from the queue.
 	if m.queues[symbol] == nil {
 		m.initQueue(symbol)
 	}

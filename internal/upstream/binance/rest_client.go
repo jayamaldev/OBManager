@@ -6,9 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
-
 	"ob-manager/internal/dtos"
+	"strconv"
 )
 
 type RestClient struct {
@@ -43,7 +42,7 @@ func (c *RestClient) GetSnapshot(ctx context.Context, currPair string) error {
 		}
 	}()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK { // FEEDBACK: should check err before using resp as it can be nil if err is not nil
 		slog.Error("Error on Getting Snapshot", "curr pair", currPair, "Error", err)
 
 		return err
@@ -51,7 +50,6 @@ func (c *RestClient) GetSnapshot(ctx context.Context, currPair string) error {
 
 	var snapshot *dtos.Snapshot
 	err = json.NewDecoder(resp.Body).Decode(&snapshot)
-
 	if err != nil {
 		slog.Error("Error on parse Response Json", "curr pair", currPair, "Error", err)
 

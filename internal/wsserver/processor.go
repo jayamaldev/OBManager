@@ -15,7 +15,7 @@ type SubscriptionManager interface {
 }
 
 type RequestProcessor struct {
-	SubscriptionManager
+	SubscriptionManager // FEEDBACK: Why embedding the interface here ? This will expose the methods of SubscriptionManager on RequestProcessor.
 }
 
 func NewProcessor(subs SubscriptionManager) *RequestProcessor {
@@ -29,7 +29,6 @@ func (p *RequestProcessor) handleConnection(conn *websocket.Conn) {
 	defer func() {
 		p.RemoveUser(conn)
 		err := conn.Close()
-
 		if err != nil {
 			slog.Error("Error on Closing the Connection", "error", err)
 		}

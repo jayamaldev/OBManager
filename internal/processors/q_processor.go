@@ -2,10 +2,9 @@ package processors
 
 import (
 	"log/slog"
+	"ob-manager/internal/dtos"
 	"strconv"
 	"sync"
-
-	"ob-manager/internal/dtos"
 )
 
 type Processor struct {
@@ -34,7 +33,7 @@ func (p *Processor) OrderBook() *OrderBook {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	return p.ob
+	return p.ob // FEEDBACK: returning pointer to internal state directly
 }
 
 func (p *Processor) SetReady(lastUpdateId int) {
@@ -62,7 +61,7 @@ func (p *Processor) startProcessor() {
 
 			slog.Debug("Processing event.", "curr", p.currency, "Final Id", event.FinalUpdateId, "Last Id", p.ob.lastUpdateId)
 
-			//process event
+			// process event
 			p.updateOrderBook(event)
 
 			// push update to users
