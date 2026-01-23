@@ -7,16 +7,17 @@ import (
 	"log/slog"
 	"net/http"
 	"ob-manager/internal/dtos"
+	"ob-manager/internal/processors"
 	"strconv"
 )
 
 type RestClient struct {
-	ProcManager
+	proc *processors.Manager
 }
 
-func NewRestClient(updater ProcManager) *RestClient {
+func NewRestClient(proc *processors.Manager) *RestClient {
 	return &RestClient{
-		ProcManager: updater,
+		proc: proc,
 	}
 }
 
@@ -34,6 +35,11 @@ func (c *RestClient) GetSnapshot(ctx context.Context, currPair string) error {
 	slog.Info("Sending Rest Request to get Market Depth", "Currency", currPair)
 
 	resp, err := client.Do(req)
+	if err != nil {
+		slog.Error("Error on Sending Rest Request", "curr pair", currPair, "Error", err)
+
+		return err
+	}
 
 	defer func() {
 		err := resp.Body.Close()
@@ -42,7 +48,7 @@ func (c *RestClient) GetSnapshot(ctx context.Context, currPair string) error {
 		}
 	}()
 
-	if resp.StatusCode != http.StatusOK { // FEEDBACK: should check err before using resp as it can be nil if err is not nil
+	if resp.StatusCode != http.StatusOK {
 		slog.Error("Error on Getting Snapshot", "curr pair", currPair, "Error", err)
 
 		return err
@@ -50,6 +56,7 @@ func (c *RestClient) GetSnapshot(ctx context.Context, currPair string) error {
 
 	var snapshot *dtos.Snapshot
 	err = json.NewDecoder(resp.Body).Decode(&snapshot)
+
 	if err != nil {
 		slog.Error("Error on parse Response Json", "curr pair", currPair, "Error", err)
 
@@ -69,10 +76,10 @@ func (c *RestClient) updateSnapshot(currPair string, snapshot *dtos.Snapshot) {
 	c.processAsks(currPair, snapshot.Asks)
 
 	// flag snapshot populated. start consuming push events.
-	c.SetOrderBookReady(currPair, snapshot.LastUpdateId)
+	c.proc.SetOrderBookReady(currPair, snapshot.LastUpdateId)
 }
 
-// process bids and populate order book.
+// process bids and populate the order book.
 func (c *RestClient) processBids(currPair string, bids [][]string) {
 	bidsMap := make(map[float64]float64)
 
@@ -90,10 +97,10 @@ func (c *RestClient) processBids(currPair string, bids [][]string) {
 		bidsMap[price] = qty
 	}
 
-	c.UpdateBids(currPair, bidsMap)
+	c.proc.UpdateBids(currPair, bidsMap)
 }
 
-// process asks and populate order book.
+// process asks and populate the order book.
 func (c *RestClient) processAsks(currPair string, asks [][]string) {
 	asksMap := make(map[float64]float64)
 
@@ -111,5 +118,5 @@ func (c *RestClient) processAsks(currPair string, asks [][]string) {
 		asksMap[price] = qty
 	}
 
-	c.UpdateAsks(currPair, asksMap)
+	c.proc.UpdateAsks(currPair, asksMap)
 }

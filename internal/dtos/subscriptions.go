@@ -4,11 +4,16 @@ package dtos
 type SubscriptionRequest struct {
 	Method string   `json:"method"`
 	Params []string `json:"params"`
-	Id     int      `json:"id"`
+	Id     int32    `json:"id"`
 }
 
 // ListSubscriptionRequest Request to get the Subscribed Currency Pairs list from Binance.
 type ListSubscriptionRequest struct {
 	Method string `json:"method"`
-	Id     int    `json:"id"`
+	Id     int32  `json:"id"`
+}
+
+type SubscriptionsList struct {
+	Result []string `json:"result"`
+	Id     int      `json:"id"`
 }

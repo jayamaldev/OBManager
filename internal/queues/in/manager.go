@@ -27,7 +27,7 @@ func (m *InQManager) AddToQueue(eventUpdate *dtos.EventUpdate) {
 	m.queues[eventUpdate.Symbol] <- eventUpdate
 }
 
-func (m *InQManager) DeQueue(symbol string) <-chan *dtos.EventUpdate { // FEEDBACK: change the name to Queue() or GetQueue() as DeQueue usually means removing an item from the queue.
+func (m *InQManager) Queue(symbol string) <-chan *dtos.EventUpdate {
 	if m.queues[symbol] == nil {
 		m.initQueue(symbol)
 	}

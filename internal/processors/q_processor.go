@@ -3,13 +3,15 @@ package processors
 import (
 	"log/slog"
 	"ob-manager/internal/dtos"
+	inqueues "ob-manager/internal/queues/in"
+	outqueues "ob-manager/internal/queues/out"
 	"strconv"
 	"sync"
 )
 
 type Processor struct {
-	DeQueuer
-	OutQ
+	inQ  *inqueues.InQManager
+	outQ *outqueues.Queue
 
 	mu       sync.Mutex
 	currency string
@@ -18,11 +20,11 @@ type Processor struct {
 	quit     chan struct{}
 }
 
-func NewProcessor(currency string, outQ OutQ, deQueuer DeQueuer) *Processor {
+func NewProcessor(currency string, inQ *inqueues.InQManager, outQ *outqueues.Queue) *Processor {
 	return &Processor{
 		currency: currency,
-		DeQueuer: deQueuer,
-		OutQ:     outQ,
+		inQ:      inQ,
+		outQ:     outQ,
 		isReady:  make(chan bool),
 		quit:     make(chan struct{}),
 		ob:       NewOrderBook(),
@@ -50,7 +52,7 @@ func (p *Processor) startProcessor() {
 			slog.Info("Processor Quitting.", "Currency", p.currency)
 
 			return
-		case event := <-p.DeQueue(p.currency):
+		case event := <-p.inQ.Queue(p.currency):
 			// discard unnecessary bids/asks
 			if event.FinalUpdateId < p.ob.lastUpdateId {
 				// discard
@@ -65,7 +67,7 @@ func (p *Processor) startProcessor() {
 			p.updateOrderBook(event)
 
 			// push update to users
-			p.AddToOutQ(event)
+			p.outQ.AddToOutQ(event)
 		}
 	}
 }
@@ -80,7 +82,7 @@ func (p *Processor) updateOrderBook(event *dtos.EventUpdate) {
 	p.ob.lastUpdateId = event.FinalUpdateId
 }
 
-// process bids and populate order book.
+// process bids and populate the order book.
 func (p *Processor) processEventBids(bids [][]string) {
 	bidsMap := make(map[float64]float64)
 
@@ -101,7 +103,7 @@ func (p *Processor) processEventBids(bids [][]string) {
 	p.updateBids(bidsMap)
 }
 
-// process asks and populate order book.
+// process asks and populate the order book.
 func (p *Processor) processEventAsks(asks [][]string) {
 	asksMap := make(map[float64]float64)
 

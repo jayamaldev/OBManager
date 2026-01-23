@@ -2,33 +2,22 @@ package wsserver
 
 import (
 	"log/slog"
+	"ob-manager/internal/subscriptions"
 	"strings"
 
 	"github.com/gorilla/websocket"
 )
 
-// SubscriptionManager provides abstraction of subscription user manager for the downstream server.
-type SubscriptionManager interface {
-	AddSubscription(currency string, conn *websocket.Conn)
-	RemoveSubscription(currency string, conn *websocket.Conn)
-	RemoveUser(conn *websocket.Conn)
-}
-
 type RequestProcessor struct {
-	SubscriptionManager // FEEDBACK: Why embedding the interface here ? This will expose the methods of SubscriptionManager on RequestProcessor.
-}
-
-func NewProcessor(subs SubscriptionManager) *RequestProcessor {
-	return &RequestProcessor{
-		SubscriptionManager: subs,
-	}
+	subsManager *subscriptions.Manager
 }
 
 func (p *RequestProcessor) handleConnection(conn *websocket.Conn) {
-	// remove user from the store when closing the connection
+	// remove the user from the store when closing the connection
 	defer func() {
-		p.RemoveUser(conn)
+		p.subsManager.RemoveUser(conn)
 		err := conn.Close()
+
 		if err != nil {
 			slog.Error("Error on Closing the Connection", "error", err)
 		}
@@ -63,14 +52,14 @@ func (p *RequestProcessor) handleConnection(conn *websocket.Conn) {
 	}
 }
 
-// handle user subscription request. add currency subscription to the user and send latest order book.
+// handle user subscription request. add the currency subscription to the user and send the latest order book.
 func (p *RequestProcessor) handleSubscription(conn *websocket.Conn, currPair string) {
 	slog.Info("Order Book Subscription Requested", "currency pair", currPair)
-	p.AddSubscription(currPair, conn)
+	p.subsManager.AddSubscription(currPair, conn)
 }
 
 // handle user unsubscription request. remove currency subscription from the user.
 func (p *RequestProcessor) handleUnsubscription(conn *websocket.Conn, currPair string) {
 	slog.Info("Order Book Unsubscription Requested", "curr pair", currPair)
-	p.RemoveSubscription(currPair, conn)
+	p.subsManager.RemoveSubscription(currPair, conn)
 }

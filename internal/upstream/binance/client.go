@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"ob-manager/internal/dtos"
+	"ob-manager/internal/processors"
+	inqueues "ob-manager/internal/queues/in"
 	"strings"
+	"sync/atomic"
 	"time"
+
+	"ob-manager/internal/dtos"
 
 	"github.com/gorilla/websocket"
 )
@@ -18,53 +22,42 @@ const (
 	maxWait          = 60 * time.Second
 )
 
-type ProcManager interface {
-	// FEEDBACK: NOTE: We can use dependency towards the inner core without defining an interface here. The interface adds unnecessary complexity.
-	// FEEDBACK: Also, the name ProcManager is not very elegant. Why not ProcessorManager ?
-	ResetProcessors()
-	StartProcessor(currency string)
-	SetOrderBookReady(currency string, lastUpdateId int)
-	UpdateBids(currency string, bids map[float64]float64)
-	UpdateAsks(currency string, asks map[float64]float64)
-}
-
-type SnapshotGetter interface { // FEEDBACK: No need for an interface no, when we directly create RestClient inside NewClient ?
+type SnapshotGetter interface {
 	GetSnapshot(ctx context.Context, currPair string) error
 }
 
-type QueueAdder interface { // FEEDBACK: why not simply Queue? QueueAdder is not very elegant.
-	AddToQueue(update *dtos.EventUpdate)
-}
-
 type Client struct {
-	QueueAdder     // FEEDBACK: why are we embedding the interface here ? This will expose the methods of QueueAdder on Client.
-	SnapshotGetter // FEEDBACK: same question as above
-	ProcManager    // FEEDBACK: same question as above
+	inQ         *inqueues.InQManager
+	restC       *RestClient
+	procManager *processors.Manager
 
-	conn     *websocket.Conn
-	requests chan []byte
-	idGen    *IDGenerator // FEEDBACK: You can make this a direct field instead of a pointer.
-	// use an atomic integer for uniqueReqId see "sync/atomic"
+	conn         *websocket.Conn
+	requests     chan []byte
+	unqId        atomic.Int32
 	bufferedMsgs chan []byte
 }
 
-func NewClient(requests chan []byte, q QueueAdder, proc ProcManager) *Client {
-	idGen := NewIDGenerator()
-	getter := NewRestClient(proc) // FEEDBACK: beat the purpose of dependency injection when we create RestClient here inside NewClient.
+func NewClient(requests chan []byte, inQ *inqueues.InQManager, proc *processors.Manager) *Client {
+	restC := NewRestClient(proc)
 	bufferSize := 50000
 
-	return &Client{
-		idGen:          idGen,
-		requests:       requests,
-		bufferedMsgs:   make(chan []byte, bufferSize),
-		QueueAdder:     q,
-		SnapshotGetter: getter,
-		ProcManager:    proc,
+	c := Client{
+		requests:     requests,
+		bufferedMsgs: make(chan []byte, bufferSize),
+		inQ:          inQ,
+		restC:        restC,
+		procManager:  proc,
 	}
+
+	go c.sendRequests()
+
+	go c.processMessage()
+
+	return &c
 }
 
-// ConnectToServer connects with binance server and reads responses.
-func (c *Client) ConnectToServer(ctx context.Context) {
+// StartClient connects with the binance server and reads responses.
+func (c *Client) StartClient(ctx context.Context) {
 	u := url.URL{
 		Scheme: wssStream,
 		Host:   binanceUrl,
@@ -73,60 +66,64 @@ func (c *Client) ConnectToServer(ctx context.Context) {
 
 	waitTime := 1 * time.Second
 
-	for {
-		slog.Info("connecting to websocket", "url", u.String())
+	go func() {
+		for {
+			slog.Info("connecting to websocket", "url", u.String())
 
-		conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+			conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 
-		if err != nil {
-			slog.Error("Websocket connectivity issue", "Error", err)
-		} else {
-			slog.Info("Connected to websocket", "url", u.String())
-
-			waitTime = 1 * time.Second // reset wait time
-
-			c.conn = conn
-
-			// subscribe to default currency list
-			c.subscribeToCurrencies(ctx)
-
-			err = c.readWSMessages()
 			if err != nil {
-				slog.Error("Websocket read error", "Error", err)
-				c.ResetProcessors()
+				slog.Error("Websocket connectivity issue", "Error", err)
+			} else {
+				slog.Info("Connected to websocket", "url", u.String())
+
+				waitTime = 1 * time.Second //reset wait time
+
+				c.conn = conn
+
+				// subscribe to default currency list
+				c.subscribeToCurrencies(ctx)
+
+				err = c.readWSMessages()
+				if err != nil {
+					slog.Error("Websocket read error", "Error", err)
+					c.procManager.ResetProcessors()
+				}
+			}
+
+			select {
+			case <-ctx.Done():
+				break
+			case <-time.After(waitTime):
+				waitTime = min(waitTime*2, maxWait)
 			}
 		}
-
-		select {
-		case <-ctx.Done():
-			break // FEEDBACK: ctx cancelled, return from function after cleaning up
-		case <-time.After(waitTime):
-			waitTime = min(waitTime*2, maxWait)
-		}
-	}
-}
-
-func (c *Client) SendRequests() {
-	for {
-		request := <-c.requests
-		slog.Info("Sending Web Socket Request", "Request", request)
-		err := c.conn.WriteMessage(websocket.TextMessage, request)
-		if err != nil {
-			slog.Error("Error on sending subscription request", "Error", err)
-		}
-	}
+	}()
 }
 
 func (c *Client) CloseConnection() {
 	close(c.requests)
 
 	err := c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+
 	if err != nil {
 		slog.Error("Error on writing close request to websocket", "Error", err)
 	}
 }
 
-func (c *Client) ProcessMessage() {
+func (c *Client) sendRequests() {
+	for {
+		request := <-c.requests
+		slog.Info("Sending Web Socket Request", "Request", request)
+		err := c.conn.WriteMessage(websocket.TextMessage, request)
+
+		if err != nil {
+			slog.Error("Error on sending subscription request", "Error", err)
+		}
+	}
+}
+
+func (c *Client) processMessage() {
 	slog.Info("started binance message processors")
 
 	var rawMap map[string]interface{}
@@ -181,7 +178,7 @@ func (c *Client) subscribeToCurrencies(ctx context.Context) {
 	for _, currency := range currencies {
 		slog.Info("Subscribing", "currency", currency)
 
-		go func(curr string) { // FEEDBACK: why is this in a separate goroutine ?
+		go func(curr string) {
 			err := c.subscribeToCurrPair(curr)
 			if err != nil {
 				slog.Error("Error in subscribing", "Currency", currency, err)
@@ -189,15 +186,14 @@ func (c *Client) subscribeToCurrencies(ctx context.Context) {
 		}(currency)
 
 		go func(ctx context.Context, curr string) {
-			err := c.GetSnapshot(ctx, curr) // FEEDBACK: there is no gurantee that subscription is done before snapshot is fetched. Race condition.
+			err := c.restC.GetSnapshot(ctx, curr)
 			if err != nil {
 				slog.Error("Error in getting snapshot", "Currency", currency, err)
 			}
 		}(ctx, currency)
 
 		go func(curr string) {
-			c.StartProcessor(curr) // FEEDBACK: Wny is that starting the processor is in a separate goroutine. bad design if caller has to manage go routines.
-			// Also why is starting the processor is the reponsibility of Binance client ? Tis creates tight coupling.
+			c.procManager.StartProcessor(curr)
 		}(currency)
 	}
 }
@@ -207,7 +203,7 @@ func (c *Client) subscribeToCurrPair(currencyPair string) error {
 	subscriptionRequest := dtos.SubscriptionRequest{
 		Method: subscribe,
 		Params: []string{depthRequest},
-		Id:     c.idGen.getUniqueReqId(),
+		Id:     c.unqId.Add(1),
 	}
 
 	slog.Info("Subscription currency pair", "curr pair", currencyPair)
@@ -262,7 +258,7 @@ func (c *Client) readWSMessages() error {
 }
 
 func (c *Client) processMarketDepthUpdate(eventUpdate dtos.EventUpdate) {
-	c.AddToQueue(&eventUpdate)
+	c.inQ.AddToQueue(&eventUpdate)
 	slog.Debug("adding event to the channel")
 }
 
