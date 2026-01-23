@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"ob-manager/internal/subscriptions"
 
 	"github.com/gorilla/websocket"
 )
@@ -12,39 +13,42 @@ const (
 	subscribe, unsubscribe = "SUB", "UNSUB"
 )
 
-type Processor interface {
-	handleConnection(conn *websocket.Conn)
-}
-
 type WSServer struct {
-	*http.Server
-	Processor // FEEDBACK: Why embedding the interface here ? This will expose the methods of Processor on WSServer.
+	srv       *http.Server
+	processor *RequestProcessor
 }
 
-func NewWSServer(proc Processor) *WSServer {
+func NewWSServer(subs *subscriptions.Manager) *WSServer {
+	proc := &RequestProcessor{
+		subsManager: subs,
+	}
 	server := &http.Server{
 		Addr:    ":8080",
 		Handler: nil,
 	}
 
-	return &WSServer{
-		Server:    server,
-		Processor: proc,
+	s := &WSServer{
+		srv:       server,
+		processor: proc,
 	}
-}
 
-func (s *WSServer) StartServer() {
-	http.HandleFunc("/ws", s.websocketHandler)
-	slog.Info("Websocket Server started on :8080")
+	go s.startServer()
 
-	err := s.ListenAndServe()
-	if err != nil {
-		slog.Error("Error on websocket Server: ", "Error", err)
-	}
+	return s
 }
 
 func (s *WSServer) ShutDown(ctx context.Context) error {
-	return s.Shutdown(ctx)
+	return s.srv.Shutdown(ctx)
+}
+
+func (s *WSServer) startServer() {
+	http.HandleFunc("/ws", s.websocketHandler)
+	slog.Info("Websocket Server started on :8080")
+
+	err := s.srv.ListenAndServe()
+	if err != nil {
+		slog.Error("Error on websocket Server: ", "Error", err)
+	}
 }
 
 func (s *WSServer) websocketHandler(w http.ResponseWriter, r *http.Request) {
@@ -55,7 +59,7 @@ func (s *WSServer) websocketHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go s.handleConnection(conn)
+	go s.processor.handleConnection(conn)
 }
 
 var upgrader = websocket.Upgrader{

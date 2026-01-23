@@ -3,30 +3,23 @@ package processors
 import (
 	"encoding/json"
 	"log/slog"
-	"ob-manager/internal/dtos"
+	inqueues "ob-manager/internal/queues/in"
+	outqueues "ob-manager/internal/queues/out"
 	"sync"
 )
 
-type DeQueuer interface {
-	DeQueue(symbol string) <-chan *dtos.EventUpdate
-}
-
-type OutQ interface {
-	AddToOutQ(event *dtos.EventUpdate)
-}
-
 type Manager struct {
-	DeQueuer
-	OutQ
+	inQ  *inqueues.InQManager
+	outQ *outqueues.Queue
 
 	mu         sync.RWMutex
 	processors map[string]*Processor
 }
 
-func NewManager(deQueuer DeQueuer, outQ OutQ) *Manager {
+func NewManager(inQ *inqueues.InQManager, outQ *outqueues.Queue) *Manager {
 	return &Manager{
-		DeQueuer:   deQueuer,
-		OutQ:       outQ,
+		inQ:        inQ,
+		outQ:       outQ,
 		processors: make(map[string]*Processor),
 	}
 }
@@ -35,7 +28,7 @@ func (m *Manager) StartProcessor(currency string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	proc := NewProcessor(currency, m.OutQ, m.DeQueuer)
+	proc := NewProcessor(currency, m.inQ, m.outQ)
 	m.processors[currency] = proc
 
 	go proc.startProcessor()
@@ -48,7 +41,7 @@ func (m *Manager) Processor(currency string) *Processor {
 	return m.processors[currency]
 }
 
-// GetOrderBook parses order book to a JSON to send to the subscriber.
+// GetOrderBook parses the order book to a JSON to send to the subscriber.
 func (m *Manager) GetOrderBook(curr string) ([]byte, int) {
 	proc := m.Processor(curr)
 	ob := proc.OrderBook() // FEEDBACK: this reference is not thread safe if OrderBook() returns pointer to internal state directly. it keeps changing while being read.
@@ -72,12 +65,12 @@ func (m *Manager) UpdateAsks(currency string, asks map[float64]float64) {
 	m.Processor(currency).updateAsks(asks)
 }
 
-// SetOrderBookReady marks order book is populated and ready to process push events.
+// SetOrderBookReady marks the order book is populated and ready to process push events.
 func (m *Manager) SetOrderBookReady(currency string, lastUpdateId int) {
 	m.Processor(currency).SetReady(lastUpdateId)
 }
 
-// ResetProcessors clears all order books and prepare for a reconnection.
+// ResetProcessors clears all order books and prepares for a reconnection.
 func (m *Manager) ResetProcessors() {
 	for _, p := range m.processors {
 		p.stopProcessor()

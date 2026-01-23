@@ -37,11 +37,16 @@ type Manager struct {
 }
 
 func NewManager(getter OutQGetter, obGetter OBGetter) *Manager {
-	return &Manager{
+	m := Manager{
 		OutQGetter: getter,
 		OBGetter:   obGetter,
 		subs:       make(map[string][]*User),
 	}
+
+	// start the push handler for the subscribed users
+	m.startPushHandler()
+
+	return &m
 }
 
 // AddSubscription adds a subscription for the user to a currency pair.
@@ -84,7 +89,7 @@ func (m *Manager) RemoveUser(conn *websocket.Conn) {
 }
 
 // StartPushHandler creates a go routine that handles push messages to the subscribers.
-func (m *Manager) StartPushHandler() {
+func (m *Manager) startPushHandler() {
 	go func() {
 		slog.Info("Starting Push Handler")
 
@@ -104,7 +109,7 @@ func (m *Manager) handlePushEvent(event *dtos.EventUpdate) {
 
 	for _, u := range m.subs[event.Symbol] {
 		if u.lastUpdateId == 0 {
-			// send order book
+			// send the order book
 			ob, lastUpdateId := m.GetOrderBook(event.Symbol)
 			m.sendWSMessage(u.conn, ob)
 			u.lastUpdateId = lastUpdateId //set order book id
