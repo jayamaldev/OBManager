@@ -10,7 +10,7 @@ const (
 )
 
 type InQManager struct {
-	mu     sync.Mutex
+	mu     sync.RWMutex
 	queues map[string]chan *dtos.EventUpdate
 }
 
@@ -21,26 +21,35 @@ func NewQManager() *InQManager {
 }
 
 func (m *InQManager) AddToQueue(eventUpdate *dtos.EventUpdate) {
-	if m.queues[eventUpdate.Symbol] == nil { // FEEDBACK - Race condition not protected by . AddToQueue() and DeQueue() can be called concurrently.
-		m.initQueue(eventUpdate.Symbol)
-	}
-	m.queues[eventUpdate.Symbol] <- eventUpdate
+	q := m.getOrCreateQueue(eventUpdate.Symbol)
+	q <- eventUpdate
 }
 
 func (m *InQManager) Queue(symbol string) <-chan *dtos.EventUpdate {
-	if m.queues[symbol] == nil {
-		m.initQueue(symbol)
-	}
-
-	return m.queues[symbol]
+	return m.getOrCreateQueue(symbol)
 }
 
-func (m *InQManager) initQueue(currency string) {
-	m.mu.Lock()
+func (m *InQManager) getOrCreateQueue(currency string) chan *dtos.EventUpdate {
+	m.mu.RLock() // read lock
+
+	if q, ok := m.queues[currency]; ok {
+		m.mu.RUnlock()
+
+		return q
+	}
+
+	m.mu.RUnlock() //unlock read lock
+
+	m.mu.Lock() // write lock to make a new channel
 	defer m.mu.Unlock()
 
-	if m.queues[currency] == nil {
-		q := make(chan *dtos.EventUpdate, queueSize)
-		m.queues[currency] = q
+	// double-check this to confirm another goroutine is not created
+	if q, ok := m.queues[currency]; ok {
+		return q
 	}
+
+	q := make(chan *dtos.EventUpdate, queueSize)
+	m.queues[currency] = q
+
+	return q
 }

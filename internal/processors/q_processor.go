@@ -6,14 +6,12 @@ import (
 	inqueues "ob-manager/internal/queues/in"
 	outqueues "ob-manager/internal/queues/out"
 	"strconv"
-	"sync"
 )
 
 type Processor struct {
 	inQ  *inqueues.InQManager
 	outQ *outqueues.Queue
 
-	mu       sync.Mutex
 	currency string
 	isReady  chan bool
 	ob       *OrderBook
@@ -32,14 +30,11 @@ func NewProcessor(currency string, inQ *inqueues.InQManager, outQ *outqueues.Que
 }
 
 func (p *Processor) OrderBook() *OrderBook {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	return p.ob // FEEDBACK: returning pointer to internal state directly
+	return p.ob
 }
 
 func (p *Processor) SetReady(lastUpdateId int) {
-	p.ob.lastUpdateId = lastUpdateId
+	p.ob.SetLastUpdateId(lastUpdateId)
 	p.isReady <- true
 }
 
@@ -54,14 +49,14 @@ func (p *Processor) startProcessor() {
 			return
 		case event := <-p.inQ.Queue(p.currency):
 			// discard unnecessary bids/asks
-			if event.FinalUpdateId < p.ob.lastUpdateId {
+			if event.FinalUpdateId < p.ob.LastUpdateId() {
 				// discard
-				slog.Info("Discarding event.", "curr", p.currency, "Final Id", event.FinalUpdateId, "Last Id", p.ob.lastUpdateId)
+				slog.Info("Discarding event.", "curr", p.currency, "Final Id", event.FinalUpdateId, "Last Id", p.ob.LastUpdateId())
 
 				continue
 			}
 
-			slog.Debug("Processing event.", "curr", p.currency, "Final Id", event.FinalUpdateId, "Last Id", p.ob.lastUpdateId)
+			slog.Debug("Processing event.", "curr", p.currency, "Final Id", event.FinalUpdateId, "Last Id", p.ob.LastUpdateId())
 
 			// process event
 			p.updateOrderBook(event)
@@ -73,17 +68,15 @@ func (p *Processor) startProcessor() {
 }
 
 func (p *Processor) updateOrderBook(event *dtos.EventUpdate) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	p.processEventBids(event.Bids)
-	p.processEventAsks(event.Asks)
+	bids := p.processEventBids(event.Bids)
+	asks := p.processEventAsks(event.Asks)
 
 	p.ob.lastUpdateId = event.FinalUpdateId
+	p.ob.batchUpdate(bids, asks, event.FinalUpdateId)
 }
 
 // process bids and populate the order book.
-func (p *Processor) processEventBids(bids [][]string) {
+func (p *Processor) processEventBids(bids [][]string) map[float64]float64 {
 	bidsMap := make(map[float64]float64)
 
 	for _, bidEntry := range bids {
@@ -100,11 +93,11 @@ func (p *Processor) processEventBids(bids [][]string) {
 		bidsMap[price] = qty
 	}
 
-	p.updateBids(bidsMap)
+	return bidsMap
 }
 
 // process asks and populate the order book.
-func (p *Processor) processEventAsks(asks [][]string) {
+func (p *Processor) processEventAsks(asks [][]string) map[float64]float64 {
 	asksMap := make(map[float64]float64)
 
 	for _, askEntry := range asks {
@@ -121,19 +114,7 @@ func (p *Processor) processEventAsks(asks [][]string) {
 		asksMap[price] = qty
 	}
 
-	p.updateAsks(asksMap)
-}
-
-func (p *Processor) updateBids(bids map[float64]float64) {
-	for price, qty := range bids {
-		p.ob.Bids.Put(price, qty)
-	}
-}
-
-func (p *Processor) updateAsks(asks map[float64]float64) {
-	for price, qty := range asks {
-		p.ob.Asks.Put(price, qty)
-	}
+	return asksMap
 }
 
 func (p *Processor) stopProcessor() {

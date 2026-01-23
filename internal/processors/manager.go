@@ -44,10 +44,11 @@ func (m *Manager) Processor(currency string) *Processor {
 // GetOrderBook parses the order book to a JSON to send to the subscriber.
 func (m *Manager) GetOrderBook(curr string) ([]byte, int) {
 	proc := m.Processor(curr)
-	ob := proc.OrderBook() // FEEDBACK: this reference is not thread safe if OrderBook() returns pointer to internal state directly. it keeps changing while being read.
-	lastUpdateId := ob.lastUpdateId
+	ob := proc.OrderBook()
+	snapshot := ob.Snapshot()
+	lastUpdateId := snapshot.LastUpdateId
 
-	jsonStr, err := json.Marshal(ob)
+	jsonStr, err := json.Marshal(snapshot)
 	if err != nil {
 		slog.Error("error on parsing order book to json", "Err", err)
 	}
@@ -57,12 +58,12 @@ func (m *Manager) GetOrderBook(curr string) ([]byte, int) {
 
 // UpdateBids updates the bids from the snapshot.
 func (m *Manager) UpdateBids(currency string, bids map[float64]float64) {
-	m.Processor(currency).updateBids(bids)
+	m.Processor(currency).ob.updateBids(bids)
 }
 
 // UpdateAsks updates the asks from the snapshot.
 func (m *Manager) UpdateAsks(currency string, asks map[float64]float64) {
-	m.Processor(currency).updateAsks(asks)
+	m.Processor(currency).ob.updateAsks(asks)
 }
 
 // SetOrderBookReady marks the order book is populated and ready to process push events.
